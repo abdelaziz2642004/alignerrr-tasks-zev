@@ -1,5 +1,3 @@
-from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -7,28 +5,8 @@ import questionary
 from pydantic import BaseModel
 
 from zev.command_selector import show_options
-from zev.constants import FEEDBACK_FILE_NAME, HISTORY_FILE_NAME
+from zev.constants import HISTORY_FILE_NAME
 from zev.llms.types import OptionsResponse
-
-
-class FeedbackStatus(str, Enum):
-    SUCCESS = "success"
-    FAILED = "failed"
-    SKIPPED = "skipped"
-
-
-class CommandFeedback(BaseModel):
-    command: str
-    query: str
-    feedback: FeedbackStatus
-    timestamp: str
-    notes: Optional[str] = None
-
-
-class PendingFeedback(BaseModel):
-    command: str
-    query: str
-    copied_at: str
 
 
 class CommandHistoryEntry(BaseModel):
@@ -39,193 +17,13 @@ class CommandHistoryEntry(BaseModel):
 class CommandHistory:
     def __init__(self) -> None:
         self.path = Path.home() / HISTORY_FILE_NAME
-        self.feedback_path = Path.home() / FEEDBACK_FILE_NAME
         self.max_entries = 100
         self.path.touch(exist_ok=True)
-        self.feedback_path.touch(exist_ok=True)
         self.encoding = "utf-8"
 
     def save_options(self, query: str, options: OptionsResponse) -> None:
         entry = CommandHistoryEntry(query=query, response=options)
         self._write_to_history_file(entry)
-
-    def save_feedback(self, command: str, query: str, feedback: FeedbackStatus, notes: Optional[str] = None) -> None:
-        entry = CommandFeedback(
-            command=command,
-            query=query,
-            feedback=feedback,
-            timestamp=datetime.now().isoformat(),
-            notes=notes,
-        )
-        self._write_to_feedback_file(entry)
-
-    def save_pending_feedback(self, command: str, query: str) -> None:
-        """Store a pending feedback request for the next zev run."""
-        pending_file = Path.home() / ".zev_pending_feedback"
-        pending = PendingFeedback(
-            command=command,
-            query=query,
-            copied_at=datetime.now().isoformat(),
-        )
-        with open(pending_file, "w", encoding=self.encoding) as f:
-            f.write(pending.model_dump_json())
-
-    def get_pending_feedback(self) -> Optional[PendingFeedback]:
-        """Check if there's pending feedback from a previous command."""
-        pending_file = Path.home() / ".zev_pending_feedback"
-        if not pending_file.exists():
-            return None
-        try:
-            with open(pending_file, "r", encoding=self.encoding) as f:
-                content = f.read().strip()
-                if content:
-                    return PendingFeedback.model_validate_json(content)
-        except Exception:
-            pass
-        return None
-
-    def clear_pending_feedback(self) -> None:
-        """Remove the pending feedback file."""
-        pending_file = Path.home() / ".zev_pending_feedback"
-        if pending_file.exists():
-            pending_file.unlink()
-
-    def _write_to_feedback_file(self, entry: CommandFeedback) -> None:
-        with open(self.feedback_path, "a", encoding=self.encoding) as f:
-            f.write(entry.model_dump_json() + "\n")
-
-        # Trim feedback file if needed
-        with open(self.feedback_path, "r", encoding=self.encoding) as f:
-            lines = f.readlines()
-            if len(lines) > self.max_entries:
-                with open(self.feedback_path, "w", encoding=self.encoding) as f:
-                    f.writelines(lines[-self.max_entries:])
-
-    def get_feedback(self) -> list[CommandFeedback]:
-        with open(self.feedback_path, "r", encoding=self.encoding) as f:
-            entries = [CommandFeedback.model_validate_json(line) for line in f if line.strip()]
-        return entries if entries else []
-
-    def get_feedback_stats(self) -> dict:
-        feedback_entries = self.get_feedback()
-        if not feedback_entries:
-            return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
-
-        stats = {
-            "total": len(feedback_entries),
-            "success": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS),
-            "failed": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED),
-            "skipped": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED),
-        }
-        return stats
-
-    def get_command_feedback_history(self, command: str) -> list[CommandFeedback]:
-        """Get all feedback entries for a specific command."""
-        feedback_entries = self.get_feedback()
-        return [e for e in feedback_entries if e.command == command]
-
-    def get_aggregated_stats(self) -> dict:
-        """Get aggregated statistics for display. Commands are anonymized for privacy."""
-        feedback_entries = self.get_feedback()
-        if not feedback_entries:
-            return {
-                "total_feedback": 0,
-                "success_rate": 0.0,
-                "failure_rate": 0.0,
-                "command_stats": [],
-                "recent_failures": [],
-            }
-
-        # Basic counts
-        total = len(feedback_entries)
-        success_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS)
-        failed_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED)
-        skipped_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED)
-
-        # Aggregate by command (truncated for display)
-        command_data: dict[str, dict] = {}
-        for entry in feedback_entries:
-            cmd = entry.command
-            if cmd not in command_data:
-                command_data[cmd] = {"total": 0, "success": 0, "failed": 0}
-            command_data[cmd]["total"] += 1
-            if entry.feedback == FeedbackStatus.SUCCESS:
-                command_data[cmd]["success"] += 1
-            elif entry.feedback == FeedbackStatus.FAILED:
-                command_data[cmd]["failed"] += 1
-
-        # Calculate per-command stats
-        command_stats = []
-        for cmd, data in command_data.items():
-            success_rate = (data["success"] / data["total"]) * 100 if data["total"] > 0 else 0
-            command_stats.append({
-                "command": cmd,
-                "total": data["total"],
-                "success": data["success"],
-                "failed": data["failed"],
-                "success_rate": success_rate,
-            })
-
-        # Sort by total usage (most used first)
-        most_used = sorted(command_stats, key=lambda x: x["total"], reverse=True)[:5]
-
-        # Sort by failure count (highest failures first), only include commands with failures
-        highest_failures = sorted(
-            [s for s in command_stats if s["failed"] > 0],
-            key=lambda x: x["failed"],
-            reverse=True
-        )[:5]
-
-        # Get recent failures with notes
-        recent_failures = [
-            {
-                "command": e.command,
-                "notes": e.notes,
-                "timestamp": e.timestamp,
-            }
-            for e in reversed(feedback_entries)
-            if e.feedback == FeedbackStatus.FAILED
-        ][:5]
-
-        return {
-            "total_feedback": total,
-            "success_count": success_count,
-            "failed_count": failed_count,
-            "skipped_count": skipped_count,
-            "success_rate": (success_count / total) * 100 if total > 0 else 0,
-            "failure_rate": (failed_count / total) * 100 if total > 0 else 0,
-            "most_used": most_used,
-            "highest_failures": highest_failures,
-            "recent_failures": recent_failures,
-        }
-
-    def get_anonymized_export_stats(self) -> dict:
-        """Get anonymized statistics suitable for export. No actual commands or queries included."""
-        feedback_entries = self.get_feedback()
-        if not feedback_entries:
-            return {"total_feedback": 0, "success_rate": 0.0, "failure_rate": 0.0}
-
-        total = len(feedback_entries)
-        success_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS)
-        failed_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED)
-        skipped_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED)
-
-        # Count unique commands without revealing them
-        unique_commands = len(set(e.command for e in feedback_entries))
-
-        # Calculate average feedback per command
-        avg_feedback_per_command = total / unique_commands if unique_commands > 0 else 0
-
-        return {
-            "total_feedback": total,
-            "unique_commands": unique_commands,
-            "success_count": success_count,
-            "failed_count": failed_count,
-            "skipped_count": skipped_count,
-            "success_rate": (success_count / total) * 100 if total > 0 else 0,
-            "failure_rate": (failed_count / total) * 100 if total > 0 else 0,
-            "avg_feedback_per_command": round(avg_feedback_per_command, 2),
-        }
 
     def get_history(self) -> list[CommandHistoryEntry]:
         with open(self.path, "r", encoding=self.encoding) as f:
@@ -295,13 +93,10 @@ class CommandHistory:
             return
 
         commands = selected_entry.response.commands
+        workflows = selected_entry.response.workflows
 
-        if not commands:
+        if not commands and not workflows:
             print("No commands available")
             return None
 
-        show_options(commands, query=selected_entry.query, save_pending_callback=self.save_pending_feedback)
-
-    def _feedback_callback(self, command: str, query: str, feedback_status: str, notes: Optional[str] = None) -> None:
-        """Callback to save feedback from command_selector."""
-        self.save_feedback(command, query, FeedbackStatus(feedback_status), notes)
+        show_options(commands, workflows)

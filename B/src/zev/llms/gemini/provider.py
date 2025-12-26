@@ -31,6 +31,35 @@ GEMINI_RESPONSE_SCHEMA = {
             },
             "is_valid": {"type": "BOOLEAN"},
             "explanation_if_not_valid": {"type": "STRING"},
+            "workflow": {
+                "type": "OBJECT",
+                "nullable": True,
+                "properties": {
+                    "workflow_description": {"type": "STRING"},
+                    "steps": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "step_number": {"type": "INTEGER"},
+                                "command": {"type": "STRING"},
+                                "short_explanation": {"type": "STRING"},
+                                "is_dangerous": {"type": "BOOLEAN"},
+                                "dangerous_explanation": {"type": "STRING"},
+                                "depends_on_previous": {"type": "BOOLEAN"},
+                            },
+                            "required": [
+                                "step_number",
+                                "command",
+                                "short_explanation",
+                                "is_dangerous",
+                                "depends_on_previous",
+                            ],
+                        },
+                    },
+                },
+                "required": ["workflow_description", "steps"],
+            },
         },
         "required": [
             "commands",
