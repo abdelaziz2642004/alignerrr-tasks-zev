@@ -22,7 +22,13 @@ class CommandFeedback(BaseModel):
     query: str
     feedback: FeedbackStatus
     timestamp: str
-    failure_notes: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PendingFeedback(BaseModel):
+    command: str
+    query: str
+    copied_at: str
 
 
 class CommandHistoryEntry(BaseModel):
@@ -43,15 +49,46 @@ class CommandHistory:
         entry = CommandHistoryEntry(query=query, response=options)
         self._write_to_history_file(entry)
 
-    def save_feedback(self, command: str, query: str, feedback: FeedbackStatus, failure_notes: Optional[str] = None) -> None:
+    def save_feedback(self, command: str, query: str, feedback: FeedbackStatus, notes: Optional[str] = None) -> None:
         entry = CommandFeedback(
             command=command,
             query=query,
             feedback=feedback,
             timestamp=datetime.now().isoformat(),
-            failure_notes=failure_notes,
+            notes=notes,
         )
         self._write_to_feedback_file(entry)
+
+    def save_pending_feedback(self, command: str, query: str) -> None:
+        """Store a pending feedback request for the next zev run."""
+        pending_file = Path.home() / ".zev_pending_feedback"
+        pending = PendingFeedback(
+            command=command,
+            query=query,
+            copied_at=datetime.now().isoformat(),
+        )
+        with open(pending_file, "w", encoding=self.encoding) as f:
+            f.write(pending.model_dump_json())
+
+    def get_pending_feedback(self) -> Optional[PendingFeedback]:
+        """Check if there's pending feedback from a previous command."""
+        pending_file = Path.home() / ".zev_pending_feedback"
+        if not pending_file.exists():
+            return None
+        try:
+            with open(pending_file, "r", encoding=self.encoding) as f:
+                content = f.read().strip()
+                if content:
+                    return PendingFeedback.model_validate_json(content)
+        except Exception:
+            pass
+        return None
+
+    def clear_pending_feedback(self) -> None:
+        """Remove the pending feedback file."""
+        pending_file = Path.home() / ".zev_pending_feedback"
+        if pending_file.exists():
+            pending_file.unlink()
 
     def _write_to_feedback_file(self, entry: CommandFeedback) -> None:
         with open(self.feedback_path, "a", encoding=self.encoding) as f:
@@ -160,8 +197,8 @@ class CommandHistory:
             print("No commands available")
             return None
 
-        show_options(commands, query=selected_entry.query, feedback_callback=self._feedback_callback)
+        show_options(commands, query=selected_entry.query, save_pending_callback=self.save_pending_feedback)
 
-    def _feedback_callback(self, command: str, query: str, feedback_status: str, failure_notes: Optional[str] = None) -> None:
+    def _feedback_callback(self, command: str, query: str, feedback_status: str, notes: Optional[str] = None) -> None:
         """Callback to save feedback from command_selector."""
-        self.save_feedback(command, query, FeedbackStatus(feedback_status), failure_notes)
+        self.save_feedback(command, query, FeedbackStatus(feedback_status), notes)

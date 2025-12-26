@@ -1,38 +1,43 @@
-The implementation is complete. Here's a summary of the updated changes:
+● You're right. The feedback check should only happen when the user is making an actual query, not when they're using
+  utility flags. Let me fix that.
 
-  Summary of Changes
+● Read(src/zev/main.py)
+  ⎿  Read 166 lines
 
-  Key Behavioral Change
+● I see the issue. The check_pending_feedback() is called after handle_special_case() returns False, but it's called
+  before we know if it's an actual query. The fix is to move the feedback check inside get_options() so it only triggers
+   when the user is actually making a command query.
 
-  - Automatic feedback collection: Instead of requiring users to run zev --feedback, feedback is now collected
-  automatically at the start of the next zev run when there's a pending command.
+● Update(src/zev/main.py)
+  ⎿  Added 3 lines
+       35
+       36
+       37    def get_options(words: str):
+       38 +      # Check for pending feedback before processing new query
+       39 +      check_pending_feedback()
+       40 +
+       41        context = get_env_context()
+       42        console = Console()
+       43        rprint(f"")
 
-  Updated Files
+● Now remove the check from the app() function:
 
-  src/zev/command_history.py
-  - Enhanced CommandFeedback model with failure_notes: Optional[str] field
-  - Updated save_feedback() to accept optional failure_notes parameter
-  - Updated _feedback_callback() to pass failure notes to storage
+● Update(src/zev/main.py)
+  ⎿  Removed 3 lines
+       152
+       153        dotenv.load_dotenv(config_path, override=True)
+       154
+       155 -      # Check for pending feedback from previous command before proceeding
+       156 -      check_pending_feedback()
+       157 -
+       155        if not args:
+       156            run_no_prompt()
+       157            return
 
-  src/zev/command_selector.py
-  - Removed the tip message about --feedback (since it's now automatic)
-  - Updated _store_pending_feedback() to remove unused callback parameter
-  - Updated prompt_for_feedback() to ask for optional failure notes when a command fails
+● Let me verify the syntax is correct:
 
-  src/zev/main.py
-  - Added check_pending_feedback() function that checks for pending feedback and prompts automatically
-  - Simplified handle_feedback() to just show stats (since feedback is collected automatically)
-  - Updated app() to call check_pending_feedback() before processing new queries
-  - Updated show_feedback_stats() to display failure notes in recent feedback list
+● Bash(python -m py_compile src/zev/main.py && echo "Syntax OK")
+  ⎿  Syntax OK
 
-  src/zev/utils.py
-  - Updated help text to explain automatic feedback collection
-
-  User Flow
-
-  1. User runs zev "find large files" and selects a command → command copied to clipboard, pending feedback stored
-  2. User runs the command in their terminal
-  3. User runs zev again (for any query) → automatically prompted: "Did the command work?"
-  4. If "No, it failed" → prompted for optional notes: "What went wrong?"
-  5. Feedback stored with command, query, status, timestamp, and optional failure notes
-  6. User can view stats anytime with zev --feedback
+● Now the feedback prompt will only appear when the user is making an actual command query (via get_options()), not when
+   they use utility flags like --setup, --help, --version, --recent, or --feedback.

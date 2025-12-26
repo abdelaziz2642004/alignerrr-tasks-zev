@@ -60,6 +60,9 @@ def get_options(words: str):
 
 
 def run_no_prompt():
+    # Check for pending feedback before prompting for new query
+    check_pending_feedback()
+
     input = get_input_string("input", "Describe what you want to do:", required=False, help_text="(-h for help)")
     if handle_special_case(input):
         return
@@ -149,12 +152,12 @@ def app():
 
     dotenv.load_dotenv(config_path, override=True)
 
-    # Check for pending feedback from previous command before proceeding
-    check_pending_feedback()
-
     if not args:
         run_no_prompt()
         return
+
+    # Check for pending feedback before processing a new query
+    check_pending_feedback()
 
     # Strip any trailing question marks from the input
     query = " ".join(args).rstrip("?")
