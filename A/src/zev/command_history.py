@@ -1,14 +1,27 @@
+from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 import questionary
-from pydantic import BaseModel, ValidationError
-from rich.console import Console
+from pydantic import BaseModel
 
 from zev.command_selector import show_options
-from zev.command_validator import validate_command, print_validation_error
-from zev.constants import HISTORY_FILE_NAME
-from zev.llms.types import Command, OptionsResponse
+from zev.constants import FEEDBACK_FILE_NAME, HISTORY_FILE_NAME
+from zev.llms.types import OptionsResponse
+
+
+class FeedbackStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class CommandFeedback(BaseModel):
+    command: str
+    query: str
+    feedback: FeedbackStatus
+    timestamp: str
 
 
 class CommandHistoryEntry(BaseModel):
@@ -19,59 +32,58 @@ class CommandHistoryEntry(BaseModel):
 class CommandHistory:
     def __init__(self) -> None:
         self.path = Path.home() / HISTORY_FILE_NAME
+        self.feedback_path = Path.home() / FEEDBACK_FILE_NAME
         self.max_entries = 100
         self.path.touch(exist_ok=True)
+        self.feedback_path.touch(exist_ok=True)
         self.encoding = "utf-8"
-        self._console = Console()
-
-    def _filter_valid_commands(
-        self, options: OptionsResponse, verbose: bool = False
-    ) -> OptionsResponse:
-        """
-        Filter out commands with invalid syntax before saving to history.
-
-        Args:
-            options: The OptionsResponse containing commands to filter.
-            verbose: If True, print styled error messages for invalid commands.
-
-        Returns:
-            A new OptionsResponse with only valid commands.
-        """
-        valid_commands = []
-        for cmd in options.commands:
-            result = validate_command(cmd.command)
-            if result.is_valid:
-                valid_commands.append(cmd)
-            elif verbose:
-                # Print styled error for invalid commands
-                print_validation_error(
-                    result, command=cmd.command, console=self._console
-                )
-
-        return OptionsResponse(
-            commands=valid_commands,
-            is_valid=options.is_valid,
-            explanation_if_not_valid=options.explanation_if_not_valid,
-        )
 
     def save_options(self, query: str, options: OptionsResponse) -> None:
-        """
-        Save command options to history after filtering invalid commands.
-
-        Only commands that pass syntax validation are saved to history.
-        """
-        if options is None:
-            return
-
-        # Filter out commands with invalid syntax
-        filtered_options = self._filter_valid_commands(options)
-
-        # Don't save if there are no valid commands and the response was marked as valid
-        if not filtered_options.commands and options.is_valid:
-            return
-
-        entry = CommandHistoryEntry(query=query, response=filtered_options)
+        entry = CommandHistoryEntry(query=query, response=options)
         self._write_to_history_file(entry)
+
+    def save_feedback(self, command: str, query: str, feedback: FeedbackStatus) -> None:
+        entry = CommandFeedback(
+            command=command,
+            query=query,
+            feedback=feedback,
+            timestamp=datetime.now().isoformat(),
+        )
+        self._write_to_feedback_file(entry)
+
+    def _write_to_feedback_file(self, entry: CommandFeedback) -> None:
+        with open(self.feedback_path, "a", encoding=self.encoding) as f:
+            f.write(entry.model_dump_json() + "\n")
+
+        # Trim feedback file if needed
+        with open(self.feedback_path, "r", encoding=self.encoding) as f:
+            lines = f.readlines()
+            if len(lines) > self.max_entries:
+                with open(self.feedback_path, "w", encoding=self.encoding) as f:
+                    f.writelines(lines[-self.max_entries:])
+
+    def get_feedback(self) -> list[CommandFeedback]:
+        with open(self.feedback_path, "r", encoding=self.encoding) as f:
+            entries = [CommandFeedback.model_validate_json(line) for line in f if line.strip()]
+        return entries if entries else []
+
+    def get_feedback_stats(self) -> dict:
+        feedback_entries = self.get_feedback()
+        if not feedback_entries:
+            return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+
+        stats = {
+            "total": len(feedback_entries),
+            "success": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS),
+            "failed": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED),
+            "skipped": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED),
+        }
+        return stats
+
+    def get_command_feedback_history(self, command: str) -> list[CommandFeedback]:
+        """Get all feedback entries for a specific command."""
+        feedback_entries = self.get_feedback()
+        return [e for e in feedback_entries if e.command == command]
 
     def get_history(self) -> list[CommandHistoryEntry]:
         with open(self.path, "r", encoding=self.encoding) as f:
@@ -95,7 +107,7 @@ class CommandHistory:
 
     def display_history_options(self, reverse_history_entries, show_limit=5) -> Optional[CommandHistoryEntry]:
         if not reverse_history_entries:
-            self._console.print("[dim]No command history found[/dim]")
+            print("No command history found")
             return None
 
         style = questionary.Style(
@@ -132,7 +144,7 @@ class CommandHistory:
     def show_history(self):
         history_entries = self.get_history()
         if not history_entries:
-            self._console.print("[dim]No command history found[/dim]")
+            print("No command history found")
             return
 
         selected_entry = self.display_history_options(list(reversed(history_entries)))
@@ -143,7 +155,11 @@ class CommandHistory:
         commands = selected_entry.response.commands
 
         if not commands:
-            self._console.print("[dim]No commands available[/dim]")
+            print("No commands available")
             return None
 
-        show_options(commands)
+        show_options(commands, query=selected_entry.query, feedback_callback=self._feedback_callback)
+
+    def _feedback_callback(self, command: str, query: str, feedback_status: str) -> None:
+        """Callback to save feedback from command_selector."""
+        self.save_feedback(command, query, FeedbackStatus(feedback_status))

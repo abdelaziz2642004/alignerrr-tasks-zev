@@ -2,12 +2,11 @@ from pathlib import Path
 from typing import Optional
 
 import questionary
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from zev.command_selector import show_options
-from zev.command_validator import validate_command
 from zev.constants import HISTORY_FILE_NAME
-from zev.llms.types import Command, OptionsResponse
+from zev.llms.types import Command, CommandFeedback, OptionsResponse
 
 
 class CommandHistoryEntry(BaseModel):
@@ -22,43 +21,29 @@ class CommandHistory:
         self.path.touch(exist_ok=True)
         self.encoding = "utf-8"
 
-    def _filter_valid_commands(self, options: OptionsResponse) -> OptionsResponse:
-        """
-        Filter out commands with invalid syntax before saving to history.
-
-        Returns a new OptionsResponse with only valid commands.
-        """
-        valid_commands = []
-        for cmd in options.commands:
-            result = validate_command(cmd.command)
-            if result.is_valid:
-                valid_commands.append(cmd)
-            # Invalid commands are silently filtered out
-
-        return OptionsResponse(
-            commands=valid_commands,
-            is_valid=options.is_valid,
-            explanation_if_not_valid=options.explanation_if_not_valid,
-        )
-
     def save_options(self, query: str, options: OptionsResponse) -> None:
-        """
-        Save command options to history after filtering invalid commands.
-
-        Only commands that pass syntax validation are saved to history.
-        """
-        if options is None:
-            return
-
-        # Filter out commands with invalid syntax
-        filtered_options = self._filter_valid_commands(options)
-
-        # Don't save if there are no valid commands and the response was marked as valid
-        if not filtered_options.commands and options.is_valid:
-            return
-
-        entry = CommandHistoryEntry(query=query, response=filtered_options)
+        entry = CommandHistoryEntry(query=query, response=options)
         self._write_to_history_file(entry)
+
+    def save_feedback(self, command: Command, feedback: CommandFeedback) -> None:
+        """Update the feedback for a specific command in history."""
+        history = self.get_history()
+        if not history:
+            return
+
+        # Find and update the command in history (search from most recent)
+        updated = False
+        for entry in reversed(history):
+            for cmd in entry.response.commands:
+                if cmd.command == command.command and cmd.feedback is None:
+                    cmd.feedback = feedback
+                    updated = True
+                    break
+            if updated:
+                break
+
+        if updated:
+            self._rewrite_history(history)
 
     def get_history(self) -> list[CommandHistoryEntry]:
         with open(self.path, "r", encoding=self.encoding) as f:
@@ -79,6 +64,12 @@ class CommandHistory:
             if len(lines) > self.max_entries:
                 with open(self.path, "w", encoding=self.encoding) as f:
                     f.writelines(lines[-self.max_entries :])
+
+    def _rewrite_history(self, history: list[CommandHistoryEntry]) -> None:
+        """Rewrite the entire history file with updated entries."""
+        with open(self.path, "w", encoding=self.encoding) as f:
+            for entry in history:
+                f.write(entry.model_dump_json() + "\n")
 
     def display_history_options(self, reverse_history_entries, show_limit=5) -> Optional[CommandHistoryEntry]:
         if not reverse_history_entries:
@@ -133,4 +124,4 @@ class CommandHistory:
             print("No commands available")
             return None
 
-        show_options(commands)
+        show_options(commands, on_feedback=self.save_feedback)

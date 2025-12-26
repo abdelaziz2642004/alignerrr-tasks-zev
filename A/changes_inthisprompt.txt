@@ -1,36 +1,49 @@
- Summary of Optimizations
+I have successfully implemented the feedback mechanism. Here's a summary of the changes made:
 
-  1. Pre-compiled Regex Patterns
+  Summary of Changes
 
-  Created a _CompiledPatterns class that pre-compiles all regex patterns at module load time:
-  - TRAILING_REDIRECT: For detecting trailing redirect operators
-  - INVALID_INPUT_REDIRECT: For detecting < < patterns
-  - INVALID_OUTPUT_REDIRECT: For detecting > > patterns
-  - CONSECUTIVE_SEMICOLONS: For detecting ;; outside case statements
-  - TRIPLE_SEMICOLONS: For detecting ;;; in case statements
-  - INVALID_VAR_ASSIGNMENT: For detecting = value without variable name
+  1. src/zev/constants.py
 
-  2. Performance Improvement
+  - Added FEEDBACK_FILE_NAME = ".zevfeedback" constant for storing feedback data
 
-  - Validation now processes ~11,600 commands per second (~0.086ms per command)
-  - Pre-compiled patterns avoid recompiling regex on every validation call
+  2. src/zev/command_history.py
 
-  3. Rich Console Integration
+  - Added FeedbackStatus enum with values: SUCCESS, FAILED, SKIPPED
+  - Added CommandFeedback model to store feedback entries with: command, query, feedback status, and timestamp
+  - Added feedback storage methods to CommandHistory class:
+    - save_feedback() - saves feedback to the feedback file
+    - _write_to_feedback_file() - writes feedback entries to disk
+    - get_feedback() - retrieves all feedback entries
+    - get_feedback_stats() - returns statistics (total, success, failed, skipped counts)
+    - get_command_feedback_history() - gets feedback for a specific command
+    - _feedback_callback() - callback function for use by command_selector
 
-  Added styled output methods to ValidationResult:
-  - print_styled(console): Prints error with red text, position info, and yellow suggestion
-  - to_panel(command): Returns a Rich Panel for more prominent error display
+  3. src/zev/command_selector.py
 
-  Added helper function:
-  - print_validation_error(result, command, console, use_panel): Convenience function for styled output
+  - Modified show_options() to accept optional query and feedback_callback parameters
+  - Modified handle_selected_option() to:
+    - Show a tip about using zev --feedback after copying to clipboard
+    - Store pending feedback info for later retrieval
+    - Prompt for immediate feedback when running commands directly (fallback mode)
+  - Added _store_pending_feedback() - stores pending feedback info to ~/.zev_pending_feedback
+  - Added prompt_for_feedback() - displays interactive feedback prompt with options: "Yes, it worked!", "No, it failed", "Skip feedback"
 
-  4. Updated CommandHistory
+  4. src/zev/main.py
 
-  - Added Rich Console instance to CommandHistory class
-  - Updated _filter_valid_commands() with optional verbose parameter to show styled errors
-  - Replaced plain print() calls with styled console.print() for consistent UI
+  - Added --feedback / -f flag to handle_special_case()
+  - Added handle_feedback() - handles the feedback flow (checks for pending feedback or shows stats)
+  - Added show_feedback_stats() - displays feedback statistics with visual formatting
+  - Updated get_options() to pass query and feedback callback to show_options()
 
-  Example Styled Output
+  5. src/zev/utils.py
 
-  ✗ Unclosed double quote starting at position 5: 'echo "unclosed' (position 5)
-    → Add a closing double quote (") to match the opening quote
+  - Updated help text to include the new --feedback, -f option
+
+  How It Works
+
+  1. After selecting a command: When a user selects a command and it's copied to clipboard, they see a tip: "Tip: After running the command, use 'zev --feedback' to report if it worked"
+  2. Providing feedback: Users can run zev --feedback or zev -f to:
+    - If there's a pending command, they're prompted to report if it worked (Success/Failed/Skip)
+    - If no pending command, they see feedback statistics
+  3. Feedback storage: Feedback is stored in ~/.zevfeedback as JSON lines with command, query, status, and timestamp
+  4. Statistics: The --feedback flag shows overall stats including success/failure rates and recent feedback entries

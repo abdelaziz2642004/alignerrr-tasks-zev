@@ -42,7 +42,7 @@ def get_options(words: str):
         print("No commands available")
         return
 
-    show_options(response.commands)
+    show_options(response.commands, query=words, feedback_callback=command_history._feedback_callback)
 
 
 def run_no_prompt():
@@ -76,11 +76,76 @@ def handle_special_case(args):
         command_history.show_history()
         return True
 
+    if command == "--feedback" or command == "-f":
+        handle_feedback()
+        return True
+
     if command == "--help" or command == "-h":
         show_help()
         return True
 
     return False
+
+
+def handle_feedback():
+    """Handle the --feedback flag to provide feedback on the last command or view stats."""
+    from pathlib import Path
+    from zev.command_selector import prompt_for_feedback
+    import json
+
+    pending_file = Path.home() / ".zev_pending_feedback"
+
+    # Check if there's a pending feedback
+    if pending_file.exists():
+        try:
+            with open(pending_file, "r") as f:
+                pending = json.load(f)
+
+            rprint(f"\n[cyan]Last command:[/cyan] {pending['command']}")
+            rprint(f"[dim]Query: {pending['query']}[/dim]\n")
+
+            prompt_for_feedback(
+                pending["command"],
+                pending["query"],
+                command_history._feedback_callback
+            )
+
+            # Remove pending file after feedback
+            pending_file.unlink()
+        except (json.JSONDecodeError, KeyError):
+            pending_file.unlink()
+            show_feedback_stats()
+    else:
+        show_feedback_stats()
+
+
+def show_feedback_stats():
+    """Display feedback statistics."""
+    stats = command_history.get_feedback_stats()
+
+    rprint("\n[bold]Command Feedback Statistics[/bold]")
+    rprint("─" * 30)
+
+    if stats["total"] == 0:
+        rprint("[dim]No feedback recorded yet.[/dim]")
+        rprint("[dim]After running a command, use 'zev --feedback' to report if it worked.[/dim]")
+        return
+
+    success_pct = (stats["success"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+    failed_pct = (stats["failed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+
+    rprint(f"Total feedback entries: {stats['total']}")
+    rprint(f"[green]✓ Successful:[/green] {stats['success']} ({success_pct:.1f}%)")
+    rprint(f"[red]✗ Failed:[/red] {stats['failed']} ({failed_pct:.1f}%)")
+    rprint(f"[dim]○ Skipped:[/dim] {stats['skipped']}")
+
+    # Show recent feedback entries
+    feedback_entries = command_history.get_feedback()
+    if feedback_entries:
+        rprint("\n[bold]Recent Feedback:[/bold]")
+        for entry in reversed(feedback_entries[-5:]):
+            status_icon = "[green]✓[/green]" if entry.feedback.value == "success" else "[red]✗[/red]" if entry.feedback.value == "failed" else "[dim]○[/dim]"
+            rprint(f"  {status_icon} {entry.command[:50]}{'...' if len(entry.command) > 50 else ''}")
 
 
 def app():

@@ -1,41 +1,41 @@
- Summary of Changes
+The implementation is complete. Here's a summary of the changes:
 
-  1. Performance Optimization - Pre-compiled Regex Patterns
+  Summary of Changes
 
-  Added a _CompiledPatterns class that pre-compiles all regex patterns at module load time:
-  - TRAILING_REDIRECT - detects trailing redirect operators
-  - SPACED_INPUT_REDIRECT - detects < < pattern
-  - SPACED_OUTPUT_REDIRECT - detects > > pattern
-  - CONSECUTIVE_SEMICOLONS - detects ;; outside case statements
-  - TRIPLE_SEMICOLONS - detects ;;; in case statements
-  - INVALID_VAR_ASSIGN - detects = value at start
+  1. src/zev/llms/types.py
 
-  Performance Results:
-  - 11,000+ validations per second
-  - ~0.09ms per validation
-  - Patterns compiled once at import, reused for all validations
+  - Added CommandFeedback enum with values: SUCCESS, FAILED, SKIPPED
+  - Added optional feedback field to the Command model
 
-  2. Rich Console Integration
+  2. src/zev/command_selector.py
 
-  Added styled error output that integrates with the app's visual style:
+  - Updated show_options() to accept an optional on_feedback callback
+  - Updated handle_selected_option() to prompt for feedback after copying to clipboard
+  - Added prompt_for_feedback() function that displays an interactive menu asking users if the command worked:
+    - "Skip feedback" (default)
+    - "Command worked"
+    - "Command failed"
 
-  from zev.command_validator import print_validation_error
+  3. src/zev/command_history.py
 
-  result = validate_command(cmd)
-  result.print_styled(console)  # or print_validation_error(result, console)
+  - Added save_feedback() method that finds the command in history and updates its feedback status
+  - Added _rewrite_history() helper method to persist feedback updates
+  - Updated show_history() to pass the feedback callback when re-running historical commands
 
-  Styled Output Features:
-  - Green checkmark for valid commands
-  - Red X and "Validation Error" for invalid commands
-  - Dim gray labels for position and error code
-  - Yellow lightbulb emoji with suggestion text
-  - Works with existing Rich Console instances
+  4. src/zev/main.py
 
-  3. Test Coverage
+  - Updated get_options() to pass command_history.save_feedback as the feedback callback
 
-  All 34 edge case tests pass including:
-  - Escaped characters
-  - Heredocs (<<, <<<)
-  - Command substitution ($(), backticks)
-  - Process substitution (<(), >())
-  - Complex real-world commands (git, docker, awk, sed, ssh, loops, case statements)
+  How It Works
+
+  1. User runs zev "list files" and selects a command
+  2. Command is copied to clipboard
+  3. User is prompted: "How did the command work? (optional)"
+  4. User can select:
+    - Skip feedback - no feedback recorded
+    - Command worked - feedback stored as success
+    - Command failed - feedback stored as failed
+  5. Feedback is persisted in ~/.zevhistory alongside the command
+
+  The feedback is stored in the history file as part of the command's JSON data, allowing future analysis of which
+  commands work well and which don't.

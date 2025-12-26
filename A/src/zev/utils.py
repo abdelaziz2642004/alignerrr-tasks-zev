@@ -56,6 +56,7 @@ Usage:
 zev "<query>"               Describe what you want to do
 zev --help, -h            Show this help message
 zev --recent, -r          Show recently run commands and results
+zev --feedback, -f        Report if the last command worked, or view feedback stats
 zev --setup, -s           Run setup again
 zev --version, -v         Show version information
 """)

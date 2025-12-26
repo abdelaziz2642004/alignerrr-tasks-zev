@@ -42,7 +42,7 @@ def get_options(words: str):
         print("No commands available")
         return
 
-    show_options(response.commands)
+    show_options(response.commands, on_feedback=command_history.save_feedback)
 
 
 def run_no_prompt():
