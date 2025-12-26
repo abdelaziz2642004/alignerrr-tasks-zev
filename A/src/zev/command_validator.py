@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+
 
 class ValidationErrorCode(Enum):
     """Categorized error codes for command validation failures."""
@@ -65,6 +69,79 @@ class ValidationResult:
             parts.append(f"Suggestion: {self.suggestion}")
         return " ".join(parts)
 
+    def print_styled(self, console: Optional[Console] = None) -> None:
+        """Print the validation result with Rich styling."""
+        if console is None:
+            console = Console()
+
+        if self.is_valid:
+            console.print("[green]✓[/green] Command is valid")
+            return
+
+        # Build styled error message
+        error_text = Text()
+        error_text.append("✗ ", style="bold red")
+        error_text.append(self.error_message or "Unknown error", style="red")
+
+        if self.error_position is not None:
+            error_text.append(f" (position {self.error_position})", style="dim")
+
+        console.print(error_text)
+
+        if self.suggestion:
+            suggestion_text = Text()
+            suggestion_text.append("  → ", style="yellow")
+            suggestion_text.append(self.suggestion, style="italic yellow")
+            console.print(suggestion_text)
+
+    def to_panel(self, command: Optional[str] = None) -> Panel:
+        """Return error as a Rich Panel for display."""
+        content = Text()
+
+        if command:
+            content.append("Command: ", style="bold")
+            content.append(f"{command}\n\n", style="cyan")
+
+        content.append("Error: ", style="bold red")
+        content.append(self.error_message or "Unknown error", style="red")
+
+        if self.error_position is not None:
+            content.append(f"\nPosition: {self.error_position}", style="dim")
+
+        if self.suggestion:
+            content.append("\n\nSuggestion: ", style="bold yellow")
+            content.append(self.suggestion, style="yellow")
+
+        return Panel(
+            content,
+            title="[red]Validation Error[/red]",
+            border_style="red",
+            expand=False,
+        )
+
+
+# Pre-compiled regex patterns for performance
+class _CompiledPatterns:
+    """Pre-compiled regex patterns for command validation."""
+
+    # Trailing operator patterns
+    TRAILING_REDIRECT = re.compile(r"[<>]+\s*$")
+
+    # Redirection validation patterns
+    INVALID_INPUT_REDIRECT = re.compile(r"<\s+<(?!<)")
+    INVALID_OUTPUT_REDIRECT = re.compile(r">\s+>(?!>)")
+
+    # Semicolon patterns
+    CONSECUTIVE_SEMICOLONS = re.compile(r";\s*;")
+    TRIPLE_SEMICOLONS = re.compile(r";;;+")
+
+    # Variable assignment pattern
+    INVALID_VAR_ASSIGNMENT = re.compile(r"^\s*=")
+
+
+# Singleton patterns instance
+_patterns = _CompiledPatterns()
+
 
 class CommandValidator:
     """Validates shell commands for syntax errors and malformed constructs."""
@@ -72,32 +149,27 @@ class CommandValidator:
     # Shell control flow keywords that must be balanced
     CONTROL_KEYWORDS = {
         "if": "fi",
-        "then": None,  # Part of if block
-        "elif": None,  # Part of if block
-        "else": None,  # Part of if block
+        "then": None,
+        "elif": None,
+        "else": None,
         "fi": "if",
         "for": "done",
         "while": "done",
         "until": "done",
-        "do": None,  # Part of loop
+        "do": None,
         "done": ("for", "while", "until"),
         "case": "esac",
         "esac": "case",
         "select": "done",
     }
 
+    def __init__(self) -> None:
+        """Initialize the validator with pre-compiled patterns."""
+        self._patterns = _patterns
+
     def validate(self, command: str) -> ValidationResult:
         """
         Validate a shell command for syntax errors and malformed constructs.
-
-        Performs comprehensive validation including:
-        - Empty/whitespace command detection
-        - Quote balancing (single, double, backticks)
-        - Operator placement (pipes, redirects, logical operators)
-        - Delimiter balancing (parentheses, braces, brackets)
-        - Pipe chain integrity
-        - Redirection target validation
-        - Shell control flow keyword balancing
 
         Args:
             command: The shell command string to validate.
@@ -113,7 +185,6 @@ class CommandValidator:
                 suggestion="Provide a valid shell command string",
             )
 
-        # Check for empty command
         if not command or command.isspace():
             return ValidationResult(
                 is_valid=False,
@@ -122,50 +193,23 @@ class CommandValidator:
                 suggestion="Provide a non-empty shell command",
             )
 
-        # Check for quote balancing with detailed position info
-        quote_result = self._check_quotes_detailed(command)
-        if not quote_result.is_valid:
-            return quote_result
+        # Run all validation checks
+        checks = [
+            self._check_quotes_detailed,
+            self._check_trailing_operators,
+            self._check_leading_operators,
+            self._check_balanced_delimiters_detailed,
+            self._check_pipe_chain_integrity,
+            self._check_logical_operator_chains,
+            self._check_redirections_detailed,
+            self._check_command_structure_detailed,
+            self._check_control_flow_keywords,
+        ]
 
-        # Check for trailing operators
-        trailing_result = self._check_trailing_operators(command)
-        if not trailing_result.is_valid:
-            return trailing_result
-
-        # Check for leading operators
-        leading_result = self._check_leading_operators(command)
-        if not leading_result.is_valid:
-            return leading_result
-
-        # Check for balanced delimiters with position tracking
-        delimiter_result = self._check_balanced_delimiters_detailed(command)
-        if not delimiter_result.is_valid:
-            return delimiter_result
-
-        # Check pipe chain integrity
-        pipe_result = self._check_pipe_chain_integrity(command)
-        if not pipe_result.is_valid:
-            return pipe_result
-
-        # Check logical operator chains
-        logical_result = self._check_logical_operator_chains(command)
-        if not logical_result.is_valid:
-            return logical_result
-
-        # Check for malformed redirections
-        redirect_result = self._check_redirections_detailed(command)
-        if not redirect_result.is_valid:
-            return redirect_result
-
-        # Check command structure
-        structure_result = self._check_command_structure_detailed(command)
-        if not structure_result.is_valid:
-            return structure_result
-
-        # Check shell control flow keywords
-        control_result = self._check_control_flow_keywords(command)
-        if not control_result.is_valid:
-            return control_result
+        for check in checks:
+            result = check(command)
+            if not result.is_valid:
+                return result
 
         return ValidationResult(is_valid=True)
 
@@ -182,14 +226,12 @@ class CommandValidator:
                 continue
 
             if char == "\\":
-                # Backslash only escapes in double quotes or outside quotes
                 if double_quote_start is not None or (
                     single_quote_start is None and backtick_start is None
                 ):
                     escaped = True
                 continue
 
-            # Single quotes - no escaping inside
             if char == "'" and double_quote_start is None and backtick_start is None:
                 if single_quote_start is None:
                     single_quote_start = i
@@ -197,7 +239,6 @@ class CommandValidator:
                     single_quote_start = None
                 continue
 
-            # Double quotes - can be escaped
             if char == '"' and single_quote_start is None and backtick_start is None:
                 if double_quote_start is None:
                     double_quote_start = i
@@ -205,7 +246,6 @@ class CommandValidator:
                     double_quote_start = None
                 continue
 
-            # Backticks - legacy command substitution
             if char == "`" and single_quote_start is None:
                 if backtick_start is None:
                     backtick_start = i
@@ -213,7 +253,6 @@ class CommandValidator:
                     backtick_start = None
                 continue
 
-        # Check for unclosed quotes
         if single_quote_start is not None:
             context = self._get_context_snippet(command, single_quote_start)
             return ValidationResult(
@@ -244,7 +283,6 @@ class CommandValidator:
                 suggestion="Add a closing backtick (`) or use $(...) for command substitution instead",
             )
 
-        # Also verify with shlex for edge cases
         try:
             shlex.split(command)
         except ValueError as e:
@@ -264,7 +302,6 @@ class CommandValidator:
         if not stripped:
             return ValidationResult(is_valid=True)
 
-        # Check specific trailing operators with detailed messages
         if stripped.endswith("|") and not stripped.endswith("||"):
             return ValidationResult(
                 is_valid=False,
@@ -293,8 +330,6 @@ class CommandValidator:
             )
 
         if stripped.endswith("&") and not stripped.endswith("&&"):
-            # Single & for background is valid, but &> is redirect
-            # Check if it's a redirect pattern
             if len(stripped) >= 2 and stripped[-2] in "<>":
                 return ValidationResult(
                     is_valid=False,
@@ -303,11 +338,9 @@ class CommandValidator:
                     error_position=len(stripped) - 1,
                     suggestion="Specify a file after the redirection, e.g., 'cmd &> file'",
                 )
-            # Background & is valid
-            pass
 
-        # Check for trailing redirects without targets
-        redirect_match = re.search(r"[<>]+\s*$", stripped)
+        # Use pre-compiled pattern
+        redirect_match = self._patterns.TRAILING_REDIRECT.search(stripped)
         if redirect_match:
             op = redirect_match.group().strip()
             return ValidationResult(
@@ -319,8 +352,6 @@ class CommandValidator:
             )
 
         if stripped.endswith(";"):
-            # Trailing semicolon is technically valid but often indicates incomplete input
-            # Be lenient here - only flag if it's just a semicolon
             if stripped == ";":
                 return ValidationResult(
                     is_valid=False,
@@ -387,20 +418,16 @@ class CommandValidator:
 
     def _check_balanced_delimiters_detailed(self, command: str) -> ValidationResult:
         """Check for balanced delimiters with detailed position tracking."""
-        # Track opening positions for better error messages
         paren_stack: list[int] = []
         brace_stack: list[int] = []
         bracket_stack: list[int] = []
-        subshell_stack: list[int] = []  # $( positions
+        subshell_stack: list[int] = []
 
         in_single_quote = False
         in_double_quote = False
-        in_case_pattern = False  # Track if we're in a case pattern (between 'in' and ')')
         escaped = False
         i = 0
 
-        # Pre-scan for case statements to handle their special syntax
-        # Case patterns use ) without matching ( which is valid: case $x in pattern) cmd;;
         words = self._extract_unquoted_words(command)
         has_case = "case" in words and "in" in words
 
@@ -431,7 +458,6 @@ class CommandValidator:
                 i += 1
                 continue
 
-            # Check for $( command substitution
             if char == "$" and i + 1 < len(command) and command[i + 1] == "(":
                 subshell_stack.append(i)
                 i += 2
@@ -445,8 +471,6 @@ class CommandValidator:
                 elif paren_stack:
                     paren_stack.pop()
                 elif has_case:
-                    # In case statements, ) is used for pattern matching without opening (
-                    # This is valid syntax: case $x in pattern) commands;;
                     pass
                 else:
                     context = self._get_context_snippet(command, i)
@@ -488,7 +512,6 @@ class CommandValidator:
 
             i += 1
 
-        # Check for unclosed delimiters
         if subshell_stack:
             pos = subshell_stack[0]
             context = self._get_context_snippet(command, pos)
@@ -537,19 +560,13 @@ class CommandValidator:
 
     def _check_pipe_chain_integrity(self, command: str) -> ValidationResult:
         """Check for valid pipe chain structure."""
-        # Split command into segments, respecting quotes and subshells
         segments = self._split_by_operator(command, "|", exclude_double=True)
 
         for i, segment in enumerate(segments):
             stripped = segment.strip()
             if not stripped:
-                if i == 0:
-                    # Already handled by leading operator check
+                if i == 0 or i == len(segments) - 1:
                     continue
-                if i == len(segments) - 1:
-                    # Already handled by trailing operator check
-                    continue
-                # Empty segment in the middle
                 return ValidationResult(
                     is_valid=False,
                     error_message=f"Empty command in pipe chain at segment {i + 1}",
@@ -561,7 +578,6 @@ class CommandValidator:
 
     def _check_logical_operator_chains(self, command: str) -> ValidationResult:
         """Check for valid logical operator (&&, ||) chain structure."""
-        # Check for empty segments between && operators
         and_segments = self._split_by_operator(command, "&&")
         for i, segment in enumerate(and_segments):
             stripped = segment.strip()
@@ -573,7 +589,6 @@ class CommandValidator:
                     suggestion="Add a command between the '&&' operators, e.g., 'cmd1 && cmd2 && cmd3'",
                 )
 
-        # Check for empty segments between || operators
         or_segments = self._split_by_operator(command, "||")
         for i, segment in enumerate(or_segments):
             stripped = segment.strip()
@@ -589,28 +604,24 @@ class CommandValidator:
 
     def _check_redirections_detailed(self, command: str) -> ValidationResult:
         """Check for malformed redirections with detailed messages."""
-        # Pattern to find redirections: look for > >> < << with optional fd number
-        # This is a simplified check; full parsing would require more complex state machine
-
-        # Check for "< <" which is invalid (not here-string <<<)
-        if re.search(r"<\s+<(?!<)", command):
-            match = re.search(r"<\s+<(?!<)", command)
+        # Use pre-compiled patterns
+        match = self._patterns.INVALID_INPUT_REDIRECT.search(command)
+        if match:
             return ValidationResult(
                 is_valid=False,
                 error_message="Invalid redirection '< <' - did you mean '<<' (here-doc) or '<<<' (here-string)?",
                 error_code=ValidationErrorCode.REDIRECT_WITHOUT_TARGET,
-                error_position=match.start() if match else None,
+                error_position=match.start(),
                 suggestion="Use '<<' for here-documents or '<<<' for here-strings",
             )
 
-        # Check for "> >" which should be ">>"
-        if re.search(r">\s+>(?!>)", command):
-            match = re.search(r">\s+>(?!>)", command)
+        match = self._patterns.INVALID_OUTPUT_REDIRECT.search(command)
+        if match:
             return ValidationResult(
                 is_valid=False,
                 error_message="Invalid redirection '> >' - did you mean '>>' (append)?",
                 error_code=ValidationErrorCode.REDIRECT_WITHOUT_TARGET,
-                error_position=match.start() if match else None,
+                error_position=match.start(),
                 suggestion="Use '>>' without space for append redirection",
             )
 
@@ -618,14 +629,11 @@ class CommandValidator:
 
     def _check_command_structure_detailed(self, command: str) -> ValidationResult:
         """Check for malformed command structures."""
-        # Check for multiple consecutive semicolons, but allow ;; in case statements
-        # In case statements, ;; is valid syntax to end a pattern block
         words = self._extract_unquoted_words(command)
         has_case = "case" in words
 
         if not has_case:
-            # Only check for ;; outside of case statements
-            match = re.search(r";\s*;", command)
+            match = self._patterns.CONSECUTIVE_SEMICOLONS.search(command)
             if match:
                 return ValidationResult(
                     is_valid=False,
@@ -635,8 +643,7 @@ class CommandValidator:
                     suggestion="Remove extra semicolons; use single ';' to separate commands",
                 )
         else:
-            # In case statements, check for more than 2 consecutive semicolons (;;; is invalid)
-            match = re.search(r";;;+", command)
+            match = self._patterns.TRIPLE_SEMICOLONS.search(command)
             if match:
                 return ValidationResult(
                     is_valid=False,
@@ -646,8 +653,7 @@ class CommandValidator:
                     suggestion="Use ';;' to end case patterns, not more semicolons",
                 )
 
-        # Check for invalid variable assignment
-        if re.match(r"^\s*=", command):
+        if self._patterns.INVALID_VAR_ASSIGNMENT.match(command):
             return ValidationResult(
                 is_valid=False,
                 error_message="Invalid variable assignment - missing variable name before '='",
@@ -660,10 +666,8 @@ class CommandValidator:
 
     def _check_control_flow_keywords(self, command: str) -> ValidationResult:
         """Check for balanced shell control flow keywords (if/fi, for/done, etc.)."""
-        # Extract words outside quotes
         words = self._extract_unquoted_words(command)
 
-        # Track control flow structures
         if_count = 0
         for_count = 0
         while_count = 0
@@ -692,7 +696,6 @@ class CommandValidator:
             elif word == "select":
                 select_count += 1
             elif word == "done":
-                # done closes for, while, until, or select
                 if for_count > 0:
                     for_count -= 1
                 elif while_count > 0:
@@ -720,7 +723,6 @@ class CommandValidator:
                         suggestion="Add a 'case' statement before 'esac', or remove the extra 'esac'",
                     )
 
-        # Check for unclosed structures
         if if_count > 0:
             return ValidationResult(
                 is_valid=False,
@@ -776,14 +778,16 @@ class CommandValidator:
     ) -> list[str]:
         """Split command by operator, respecting quotes and subshells."""
         segments = []
-        current = []
+        current: list[str] = []
         in_single_quote = False
         in_double_quote = False
         paren_depth = 0
         escaped = False
         i = 0
+        cmd_len = len(command)
+        op_len = len(operator)
 
-        while i < len(command):
+        while i < cmd_len:
             char = command[i]
 
             if escaped:
@@ -816,18 +820,16 @@ class CommandValidator:
                 elif char == ")":
                     paren_depth -= 1
 
-                # Check for operator
-                if paren_depth == 0 and command[i:].startswith(operator):
-                    # For single char operators like |, exclude || if requested
-                    if exclude_double and len(operator) == 1:
-                        if i + 1 < len(command) and command[i + 1] == operator:
+                if paren_depth == 0 and command[i:i + op_len] == operator:
+                    if exclude_double and op_len == 1:
+                        if i + 1 < cmd_len and command[i + 1] == operator:
                             current.append(char)
                             i += 1
                             continue
 
                     segments.append("".join(current))
                     current = []
-                    i += len(operator)
+                    i += op_len
                     continue
 
             current.append(char)
@@ -839,7 +841,7 @@ class CommandValidator:
     def _extract_unquoted_words(self, command: str) -> list[str]:
         """Extract words from command that are not inside quotes."""
         words = []
-        current_word = []
+        current_word: list[str] = []
         in_single_quote = False
         in_double_quote = False
         escaped = False
@@ -900,25 +902,37 @@ def validate_command(command: str) -> ValidationResult:
     """
     Validate a shell command for syntax errors and malformed constructs.
 
-    Performs comprehensive validation including:
-    - Empty/whitespace command detection
-    - Quote balancing (single, double, backticks)
-    - Operator placement (pipes, redirects, logical operators)
-    - Delimiter balancing (parentheses, braces, brackets)
-    - Pipe chain integrity
-    - Redirection target validation
-    - Shell control flow keyword balancing
-
     Args:
         command: The shell command string to validate.
 
     Returns:
         ValidationResult with detailed error information if invalid.
-        The result includes:
-        - is_valid: bool indicating if the command is syntactically valid
-        - error_message: Human-readable description of the error
-        - error_code: Categorized error code for programmatic handling
-        - error_position: Character position where the error was detected
-        - suggestion: Actionable advice on how to fix the error
     """
     return _validator.validate(command)
+
+
+def print_validation_error(
+    result: ValidationResult,
+    command: Optional[str] = None,
+    console: Optional[Console] = None,
+    use_panel: bool = False,
+) -> None:
+    """
+    Print a validation error with Rich styling.
+
+    Args:
+        result: The validation result to print.
+        command: Optional command string for context.
+        console: Optional Rich console instance.
+        use_panel: If True, display error in a panel.
+    """
+    if console is None:
+        console = Console()
+
+    if result.is_valid:
+        return
+
+    if use_panel:
+        console.print(result.to_panel(command))
+    else:
+        result.print_styled(console)

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from rich.console import Console
+from rich.text import Text
+
 
 class ValidationErrorCode(Enum):
     """Categorized error codes for command validation failures."""
@@ -65,6 +68,58 @@ class ValidationResult:
             parts.append(f"Suggestion: {self.suggestion}")
         return " ".join(parts)
 
+    def print_styled(self, console: Optional[Console] = None) -> None:
+        """Print validation result with Rich styling."""
+        if console is None:
+            console = Console()
+
+        if self.is_valid:
+            console.print("[green]✓ Valid command[/green]")
+            return
+
+        # Build styled error output
+        error_text = Text()
+        error_text.append("✗ ", style="bold red")
+        error_text.append("Validation Error: ", style="bold red")
+        error_text.append(self.error_message or "Unknown error", style="red")
+
+        console.print(error_text)
+
+        if self.error_position is not None:
+            console.print(f"  [dim]Position:[/dim] {self.error_position}", highlight=False)
+
+        if self.error_code:
+            console.print(f"  [dim]Error code:[/dim] {self.error_code.value}", highlight=False)
+
+        if self.suggestion:
+            suggestion_text = Text()
+            suggestion_text.append("  💡 ", style="yellow")
+            suggestion_text.append(self.suggestion, style="yellow")
+            console.print(suggestion_text)
+
+
+# Pre-compiled regex patterns for performance
+class _CompiledPatterns:
+    """Pre-compiled regex patterns used by the validator."""
+
+    # Trailing redirect pattern
+    TRAILING_REDIRECT = re.compile(r"[<>]+\s*$")
+
+    # Malformed redirection patterns
+    SPACED_INPUT_REDIRECT = re.compile(r"<\s+<(?!<)")
+    SPACED_OUTPUT_REDIRECT = re.compile(r">\s+>(?!>)")
+
+    # Consecutive semicolons
+    CONSECUTIVE_SEMICOLONS = re.compile(r";\s*;")
+    TRIPLE_SEMICOLONS = re.compile(r";;;+")
+
+    # Invalid variable assignment at start
+    INVALID_VAR_ASSIGN = re.compile(r"^\s*=")
+
+
+# Singleton patterns instance
+_patterns = _CompiledPatterns()
+
 
 class CommandValidator:
     """Validates shell commands for syntax errors and malformed constructs."""
@@ -85,6 +140,10 @@ class CommandValidator:
         "esac": "case",
         "select": "done",
     }
+
+    def __init__(self) -> None:
+        """Initialize validator with pre-compiled patterns."""
+        self._patterns = _patterns
 
     def validate(self, command: str) -> ValidationResult:
         """
@@ -306,8 +365,8 @@ class CommandValidator:
             # Background & is valid
             pass
 
-        # Check for trailing redirects without targets
-        redirect_match = re.search(r"[<>]+\s*$", stripped)
+        # Check for trailing redirects without targets (using pre-compiled pattern)
+        redirect_match = self._patterns.TRAILING_REDIRECT.search(stripped)
         if redirect_match:
             op = redirect_match.group().strip()
             return ValidationResult(
@@ -395,7 +454,6 @@ class CommandValidator:
 
         in_single_quote = False
         in_double_quote = False
-        in_case_pattern = False  # Track if we're in a case pattern (between 'in' and ')')
         escaped = False
         i = 0
 
@@ -589,28 +647,27 @@ class CommandValidator:
 
     def _check_redirections_detailed(self, command: str) -> ValidationResult:
         """Check for malformed redirections with detailed messages."""
-        # Pattern to find redirections: look for > >> < << with optional fd number
-        # This is a simplified check; full parsing would require more complex state machine
+        # Use pre-compiled patterns for performance
 
         # Check for "< <" which is invalid (not here-string <<<)
-        if re.search(r"<\s+<(?!<)", command):
-            match = re.search(r"<\s+<(?!<)", command)
+        match = self._patterns.SPACED_INPUT_REDIRECT.search(command)
+        if match:
             return ValidationResult(
                 is_valid=False,
                 error_message="Invalid redirection '< <' - did you mean '<<' (here-doc) or '<<<' (here-string)?",
                 error_code=ValidationErrorCode.REDIRECT_WITHOUT_TARGET,
-                error_position=match.start() if match else None,
+                error_position=match.start(),
                 suggestion="Use '<<' for here-documents or '<<<' for here-strings",
             )
 
         # Check for "> >" which should be ">>"
-        if re.search(r">\s+>(?!>)", command):
-            match = re.search(r">\s+>(?!>)", command)
+        match = self._patterns.SPACED_OUTPUT_REDIRECT.search(command)
+        if match:
             return ValidationResult(
                 is_valid=False,
                 error_message="Invalid redirection '> >' - did you mean '>>' (append)?",
                 error_code=ValidationErrorCode.REDIRECT_WITHOUT_TARGET,
-                error_position=match.start() if match else None,
+                error_position=match.start(),
                 suggestion="Use '>>' without space for append redirection",
             )
 
@@ -624,8 +681,8 @@ class CommandValidator:
         has_case = "case" in words
 
         if not has_case:
-            # Only check for ;; outside of case statements
-            match = re.search(r";\s*;", command)
+            # Only check for ;; outside of case statements (using pre-compiled pattern)
+            match = self._patterns.CONSECUTIVE_SEMICOLONS.search(command)
             if match:
                 return ValidationResult(
                     is_valid=False,
@@ -636,7 +693,7 @@ class CommandValidator:
                 )
         else:
             # In case statements, check for more than 2 consecutive semicolons (;;; is invalid)
-            match = re.search(r";;;+", command)
+            match = self._patterns.TRIPLE_SEMICOLONS.search(command)
             if match:
                 return ValidationResult(
                     is_valid=False,
@@ -646,8 +703,8 @@ class CommandValidator:
                     suggestion="Use ';;' to end case patterns, not more semicolons",
                 )
 
-        # Check for invalid variable assignment
-        if re.match(r"^\s*=", command):
+        # Check for invalid variable assignment (using pre-compiled pattern)
+        if self._patterns.INVALID_VAR_ASSIGN.match(command):
             return ValidationResult(
                 is_valid=False,
                 error_message="Invalid variable assignment - missing variable name before '='",
@@ -922,3 +979,14 @@ def validate_command(command: str) -> ValidationResult:
         - suggestion: Actionable advice on how to fix the error
     """
     return _validator.validate(command)
+
+
+def print_validation_error(result: ValidationResult, console: Optional[Console] = None) -> None:
+    """
+    Print a validation error with Rich styling.
+
+    Args:
+        result: The ValidationResult to print.
+        console: Optional Rich Console instance. If not provided, creates a new one.
+    """
+    result.print_styled(console)

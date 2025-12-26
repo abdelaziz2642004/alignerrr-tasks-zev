@@ -3,9 +3,10 @@ from typing import Optional
 
 import questionary
 from pydantic import BaseModel, ValidationError
+from rich.console import Console
 
 from zev.command_selector import show_options
-from zev.command_validator import validate_command
+from zev.command_validator import validate_command, print_validation_error
 from zev.constants import HISTORY_FILE_NAME
 from zev.llms.types import Command, OptionsResponse
 
@@ -21,19 +22,31 @@ class CommandHistory:
         self.max_entries = 100
         self.path.touch(exist_ok=True)
         self.encoding = "utf-8"
+        self._console = Console()
 
-    def _filter_valid_commands(self, options: OptionsResponse) -> OptionsResponse:
+    def _filter_valid_commands(
+        self, options: OptionsResponse, verbose: bool = False
+    ) -> OptionsResponse:
         """
         Filter out commands with invalid syntax before saving to history.
 
-        Returns a new OptionsResponse with only valid commands.
+        Args:
+            options: The OptionsResponse containing commands to filter.
+            verbose: If True, print styled error messages for invalid commands.
+
+        Returns:
+            A new OptionsResponse with only valid commands.
         """
         valid_commands = []
         for cmd in options.commands:
             result = validate_command(cmd.command)
             if result.is_valid:
                 valid_commands.append(cmd)
-            # Invalid commands are silently filtered out
+            elif verbose:
+                # Print styled error for invalid commands
+                print_validation_error(
+                    result, command=cmd.command, console=self._console
+                )
 
         return OptionsResponse(
             commands=valid_commands,
@@ -82,7 +95,7 @@ class CommandHistory:
 
     def display_history_options(self, reverse_history_entries, show_limit=5) -> Optional[CommandHistoryEntry]:
         if not reverse_history_entries:
-            print("No command history found")
+            self._console.print("[dim]No command history found[/dim]")
             return None
 
         style = questionary.Style(
@@ -119,7 +132,7 @@ class CommandHistory:
     def show_history(self):
         history_entries = self.get_history()
         if not history_entries:
-            print("No command history found")
+            self._console.print("[dim]No command history found[/dim]")
             return
 
         selected_entry = self.display_history_options(list(reversed(history_entries)))
@@ -130,7 +143,7 @@ class CommandHistory:
         commands = selected_entry.response.commands
 
         if not commands:
-            print("No commands available")
+            self._console.print("[dim]No commands available[/dim]")
             return None
 
         show_options(commands)
