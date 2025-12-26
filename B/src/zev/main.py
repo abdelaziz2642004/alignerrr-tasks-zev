@@ -4,6 +4,7 @@ from pathlib import Path
 import dotenv
 from rich import print as rprint
 from rich.console import Console
+from rich.table import Table
 
 from zev.command_history import CommandHistory
 from zev.command_selector import prompt_for_feedback, show_options
@@ -97,6 +98,10 @@ def handle_special_case(args):
         show_feedback_stats()
         return True
 
+    if command == "--stats":
+        show_detailed_stats()
+        return True
+
     if command == "--help" or command == "-h":
         show_help()
         return True
@@ -105,7 +110,7 @@ def handle_special_case(args):
 
 
 def show_feedback_stats():
-    """Display feedback statistics."""
+    """Display basic feedback statistics."""
     stats = command_history.get_feedback_stats()
 
     rprint("\n[bold]Command Feedback Statistics[/bold]")
@@ -134,6 +139,93 @@ def show_feedback_stats():
             rprint(f"  {status_icon} {cmd_display}")
             if entry.notes:
                 rprint(f"      [dim]Note: {entry.notes[:60]}{'...' if len(entry.notes) > 60 else ''}[/dim]")
+
+    rprint("\n[dim]Tip: Use 'zev --stats' for detailed statistics with tables.[/dim]")
+
+
+def show_detailed_stats():
+    """Display detailed feedback statistics with Rich tables."""
+    console = Console()
+    stats = command_history.get_aggregated_stats()
+
+    if stats["total"] == 0:
+        rprint("\n[bold]Command Feedback Statistics[/bold]")
+        rprint("─" * 30)
+        rprint("[dim]No feedback recorded yet.[/dim]")
+        rprint("[dim]Feedback is collected automatically when you run zev after using a command.[/dim]")
+        return
+
+    # Overview table
+    rprint("\n[bold]Overview[/bold]")
+    overview_table = Table(show_header=False, box=None, padding=(0, 2))
+    overview_table.add_column("Metric", style="dim")
+    overview_table.add_column("Value")
+
+    overview_table.add_row("Total Feedback", str(stats["total"]))
+    overview_table.add_row("Success Rate", f"[green]{stats['success_rate']:.1f}%[/green]")
+    overview_table.add_row("Successful", f"[green]{stats['success']}[/green]")
+    overview_table.add_row("Failed", f"[red]{stats['failed']}[/red]")
+    overview_table.add_row("Skipped", f"[dim]{stats['skipped']}[/dim]")
+
+    console.print(overview_table)
+
+    # Most used commands table
+    if stats["command_stats"]:
+        rprint("\n[bold]Most Used Commands[/bold]")
+        cmd_table = Table(box=None, padding=(0, 1))
+        cmd_table.add_column("Command", style="cyan", max_width=50)
+        cmd_table.add_column("Uses", justify="right")
+        cmd_table.add_column("Success", justify="right", style="green")
+        cmd_table.add_column("Failed", justify="right", style="red")
+        cmd_table.add_column("Rate", justify="right")
+
+        for cmd_stat in stats["command_stats"][:10]:  # Top 10
+            cmd_display = cmd_stat["command"][:47] + "..." if len(cmd_stat["command"]) > 50 else cmd_stat["command"]
+            rate_style = "green" if cmd_stat["success_rate"] >= 70 else "yellow" if cmd_stat["success_rate"] >= 40 else "red"
+            rate_display = f"[{rate_style}]{cmd_stat['success_rate']:.0f}%[/{rate_style}]"
+
+            cmd_table.add_row(
+                cmd_display,
+                str(cmd_stat["total"]),
+                str(cmd_stat["success"]),
+                str(cmd_stat["failed"]),
+                rate_display,
+            )
+
+        console.print(cmd_table)
+
+    # Commands with highest failure rates
+    failed_commands = [c for c in stats["command_stats"] if c["failed"] > 0]
+    failed_commands.sort(key=lambda x: (x["success_rate"], -x["failed"]))  # Lowest success rate first
+
+    if failed_commands:
+        rprint("\n[bold]Commands with Highest Failure Rates[/bold]")
+        fail_table = Table(box=None, padding=(0, 1))
+        fail_table.add_column("Command", style="cyan", max_width=50)
+        fail_table.add_column("Failed", justify="right", style="red")
+        fail_table.add_column("Total", justify="right")
+        fail_table.add_column("Failure Rate", justify="right")
+
+        for cmd_stat in failed_commands[:5]:  # Top 5 failing
+            cmd_display = cmd_stat["command"][:47] + "..." if len(cmd_stat["command"]) > 50 else cmd_stat["command"]
+            failure_rate = 100 - cmd_stat["success_rate"]
+            fail_table.add_row(
+                cmd_display,
+                str(cmd_stat["failed"]),
+                str(cmd_stat["total"]),
+                f"[red]{failure_rate:.0f}%[/red]",
+            )
+
+        console.print(fail_table)
+
+    # Recent failures with notes
+    if stats["recent_failures"]:
+        rprint("\n[bold]Recent Failures[/bold]")
+        for failure in stats["recent_failures"]:
+            cmd_display = failure["command"][:60] + "..." if len(failure["command"]) > 60 else failure["command"]
+            rprint(f"  [red]✗[/red] {cmd_display}")
+            if failure["notes"]:
+                rprint(f"    [dim]Note: {failure['notes']}[/dim]")
 
 
 def app():

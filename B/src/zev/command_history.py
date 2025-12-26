@@ -202,3 +202,114 @@ class CommandHistory:
     def _feedback_callback(self, command: str, query: str, feedback_status: str, notes: Optional[str] = None) -> None:
         """Callback to save feedback from command_selector."""
         self.save_feedback(command, query, FeedbackStatus(feedback_status), notes)
+
+    def get_aggregated_stats(self) -> dict:
+        """Get detailed aggregated statistics about command feedback."""
+        feedback_entries = self.get_feedback()
+        if not feedback_entries:
+            return {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "skipped": 0,
+                "success_rate": 0.0,
+                "command_stats": [],
+                "recent_failures": [],
+            }
+
+        # Basic counts
+        total = len(feedback_entries)
+        success = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS)
+        failed = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED)
+        skipped = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED)
+
+        # Calculate success rate (excluding skipped)
+        rated = success + failed
+        success_rate = (success / rated * 100) if rated > 0 else 0.0
+
+        # Aggregate by command
+        command_data: dict[str, dict] = {}
+        for entry in feedback_entries:
+            cmd = entry.command
+            if cmd not in command_data:
+                command_data[cmd] = {"success": 0, "failed": 0, "total": 0}
+            command_data[cmd]["total"] += 1
+            if entry.feedback == FeedbackStatus.SUCCESS:
+                command_data[cmd]["success"] += 1
+            elif entry.feedback == FeedbackStatus.FAILED:
+                command_data[cmd]["failed"] += 1
+
+        # Build command stats list with success rates
+        command_stats = []
+        for cmd, data in command_data.items():
+            rated = data["success"] + data["failed"]
+            cmd_success_rate = (data["success"] / rated * 100) if rated > 0 else 0.0
+            command_stats.append({
+                "command": cmd,
+                "total": data["total"],
+                "success": data["success"],
+                "failed": data["failed"],
+                "success_rate": cmd_success_rate,
+            })
+
+        # Sort by total usage (most used first)
+        command_stats.sort(key=lambda x: x["total"], reverse=True)
+
+        # Get recent failures with notes
+        recent_failures = [
+            {"command": e.command, "notes": e.notes, "timestamp": e.timestamp}
+            for e in reversed(feedback_entries)
+            if e.feedback == FeedbackStatus.FAILED
+        ][:5]
+
+        return {
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "skipped": skipped,
+            "success_rate": success_rate,
+            "command_stats": command_stats,
+            "recent_failures": recent_failures,
+        }
+
+    def get_anonymized_stats(self) -> dict:
+        """Get anonymized statistics suitable for export (no commands or queries included)."""
+        feedback_entries = self.get_feedback()
+        if not feedback_entries:
+            return {
+                "total_feedback_entries": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "success_rate": 0.0,
+                "unique_commands_count": 0,
+                "feedback_with_notes_count": 0,
+                "date_range": None,
+            }
+
+        total = len(feedback_entries)
+        success = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS)
+        failed = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED)
+        skipped = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED)
+        rated = success + failed
+        success_rate = (success / rated * 100) if rated > 0 else 0.0
+
+        unique_commands = len(set(e.command for e in feedback_entries))
+        with_notes = sum(1 for e in feedback_entries if e.notes)
+
+        timestamps = [e.timestamp for e in feedback_entries]
+        date_range = {
+            "earliest": min(timestamps),
+            "latest": max(timestamps),
+        } if timestamps else None
+
+        return {
+            "total_feedback_entries": total,
+            "success_count": success,
+            "failed_count": failed,
+            "skipped_count": skipped,
+            "success_rate": round(success_rate, 1),
+            "unique_commands_count": unique_commands,
+            "feedback_with_notes_count": with_notes,
+            "date_range": date_range,
+        }

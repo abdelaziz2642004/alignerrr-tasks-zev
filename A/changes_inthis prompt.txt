@@ -1,0 +1,21 @@
+  Summary
+
+  New --stats Flag
+
+  Added a --stats flag that displays detailed feedback statistics using Rich tables:
+
+  1. Overall Statistics: Total feedback count, success/failure rates, breakdown of success/failed/skipped
+  2. Most Used Commands: Table showing the top 5 most frequently used commands with their usage count, success/failure counts, and success rate (color-coded: green ≥70%, yellow ≥40%, red <40%)
+  3. Commands with Most Failures: Table showing commands that failed most often, with failure count, total uses, and failure rate
+  4. Recent Failures: List of the 5 most recent failed commands with their associated notes
+
+  New Methods in CommandHistory
+
+  - get_aggregated_stats(): Returns detailed statistics including most used commands, highest failures, and recent failures with notes
+  - get_anonymized_export_stats(): Returns statistics suitable for export without revealing actual commands or queries - only metadata like total count, unique commands, success rates, and averages
+
+  Updated Files
+
+  - src/zev/main.py: Added --stats flag handler and show_detailed_stats() function with Rich tables
+  - src/zev/command_history.py: Added get_aggregated_stats() and get_anonymized_export_stats() methods
+  - src/zev/utils.py: Updated help text to include --stats flag

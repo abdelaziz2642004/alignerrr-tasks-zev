@@ -1,0 +1,19 @@
+ Summary
+
+  New --stats Flag
+
+  Added zev --stats to display detailed statistics with Rich tables showing:
+
+  1. Overview Table: Total feedback, success rate, successful/failed/skipped counts
+  2. Most Used Commands Table: Top 10 commands with usage count, success/fail breakdown, and success rate (color-coded: green ≥70%, yellow ≥40%, red <40%)
+  3. Commands with Highest Failure Rates Table: Top 5 failing commands sorted by failure rate
+  4. Recent Failures: Last 5 failed commands with their notes
+
+  New Methods in CommandHistory
+
+  - get_aggregated_stats(): Returns detailed statistics including per-command breakdowns
+  - get_anonymized_stats(): Returns statistics suitable for export without exposing actual commands/queries - only includes metadata like counts, rates, and date ranges
+
+  Updated Help Text
+
+  The help now shows both --feedback (basic stats) and --stats (detailed tables), with --feedback adding a tip to use --stats for more detail.

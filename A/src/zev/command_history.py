@@ -124,6 +124,109 @@ class CommandHistory:
         feedback_entries = self.get_feedback()
         return [e for e in feedback_entries if e.command == command]
 
+    def get_aggregated_stats(self) -> dict:
+        """Get aggregated statistics for display. Commands are anonymized for privacy."""
+        feedback_entries = self.get_feedback()
+        if not feedback_entries:
+            return {
+                "total_feedback": 0,
+                "success_rate": 0.0,
+                "failure_rate": 0.0,
+                "command_stats": [],
+                "recent_failures": [],
+            }
+
+        # Basic counts
+        total = len(feedback_entries)
+        success_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS)
+        failed_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED)
+        skipped_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED)
+
+        # Aggregate by command (truncated for display)
+        command_data: dict[str, dict] = {}
+        for entry in feedback_entries:
+            cmd = entry.command
+            if cmd not in command_data:
+                command_data[cmd] = {"total": 0, "success": 0, "failed": 0}
+            command_data[cmd]["total"] += 1
+            if entry.feedback == FeedbackStatus.SUCCESS:
+                command_data[cmd]["success"] += 1
+            elif entry.feedback == FeedbackStatus.FAILED:
+                command_data[cmd]["failed"] += 1
+
+        # Calculate per-command stats
+        command_stats = []
+        for cmd, data in command_data.items():
+            success_rate = (data["success"] / data["total"]) * 100 if data["total"] > 0 else 0
+            command_stats.append({
+                "command": cmd,
+                "total": data["total"],
+                "success": data["success"],
+                "failed": data["failed"],
+                "success_rate": success_rate,
+            })
+
+        # Sort by total usage (most used first)
+        most_used = sorted(command_stats, key=lambda x: x["total"], reverse=True)[:5]
+
+        # Sort by failure count (highest failures first), only include commands with failures
+        highest_failures = sorted(
+            [s for s in command_stats if s["failed"] > 0],
+            key=lambda x: x["failed"],
+            reverse=True
+        )[:5]
+
+        # Get recent failures with notes
+        recent_failures = [
+            {
+                "command": e.command,
+                "notes": e.notes,
+                "timestamp": e.timestamp,
+            }
+            for e in reversed(feedback_entries)
+            if e.feedback == FeedbackStatus.FAILED
+        ][:5]
+
+        return {
+            "total_feedback": total,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "success_rate": (success_count / total) * 100 if total > 0 else 0,
+            "failure_rate": (failed_count / total) * 100 if total > 0 else 0,
+            "most_used": most_used,
+            "highest_failures": highest_failures,
+            "recent_failures": recent_failures,
+        }
+
+    def get_anonymized_export_stats(self) -> dict:
+        """Get anonymized statistics suitable for export. No actual commands or queries included."""
+        feedback_entries = self.get_feedback()
+        if not feedback_entries:
+            return {"total_feedback": 0, "success_rate": 0.0, "failure_rate": 0.0}
+
+        total = len(feedback_entries)
+        success_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS)
+        failed_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED)
+        skipped_count = sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED)
+
+        # Count unique commands without revealing them
+        unique_commands = len(set(e.command for e in feedback_entries))
+
+        # Calculate average feedback per command
+        avg_feedback_per_command = total / unique_commands if unique_commands > 0 else 0
+
+        return {
+            "total_feedback": total,
+            "unique_commands": unique_commands,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "success_rate": (success_count / total) * 100 if total > 0 else 0,
+            "failure_rate": (failed_count / total) * 100 if total > 0 else 0,
+            "avg_feedback_per_command": round(avg_feedback_per_command, 2),
+        }
+
     def get_history(self) -> list[CommandHistoryEntry]:
         with open(self.path, "r", encoding=self.encoding) as f:
             entries = [CommandHistoryEntry.model_validate_json(line) for line in f if line.strip()]
