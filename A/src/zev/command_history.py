@@ -2,12 +2,12 @@ from pathlib import Path
 from typing import Optional
 
 import questionary
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from zev.command_selector import show_options
-from zev.command_validator import validate_options_response
+from zev.command_validator import validate_command
 from zev.constants import HISTORY_FILE_NAME
-from zev.llms.types import OptionsResponse
+from zev.llms.types import Command, OptionsResponse
 
 
 class CommandHistoryEntry(BaseModel):
@@ -22,15 +22,42 @@ class CommandHistory:
         self.path.touch(exist_ok=True)
         self.encoding = "utf-8"
 
-    def save_options(self, query: str, options: OptionsResponse) -> None:
-        # Validate commands before saving to history
-        validated_options = validate_options_response(options)
+    def _filter_valid_commands(self, options: OptionsResponse) -> OptionsResponse:
+        """
+        Filter out commands with invalid syntax before saving to history.
 
-        # Only save if there are valid commands
-        if not validated_options.commands:
+        Returns a new OptionsResponse with only valid commands.
+        """
+        valid_commands = []
+        for cmd in options.commands:
+            result = validate_command(cmd.command)
+            if result.is_valid:
+                valid_commands.append(cmd)
+            # Invalid commands are silently filtered out
+
+        return OptionsResponse(
+            commands=valid_commands,
+            is_valid=options.is_valid,
+            explanation_if_not_valid=options.explanation_if_not_valid,
+        )
+
+    def save_options(self, query: str, options: OptionsResponse) -> None:
+        """
+        Save command options to history after filtering invalid commands.
+
+        Only commands that pass syntax validation are saved to history.
+        """
+        if options is None:
             return
 
-        entry = CommandHistoryEntry(query=query, response=validated_options)
+        # Filter out commands with invalid syntax
+        filtered_options = self._filter_valid_commands(options)
+
+        # Don't save if there are no valid commands and the response was marked as valid
+        if not filtered_options.commands and options.is_valid:
+            return
+
+        entry = CommandHistoryEntry(query=query, response=filtered_options)
         self._write_to_history_file(entry)
 
     def get_history(self) -> list[CommandHistoryEntry]:

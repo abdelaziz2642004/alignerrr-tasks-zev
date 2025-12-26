@@ -1,0 +1,57 @@
+
+  Summary of Enhanced Command Validation
+
+  The validator has been significantly improved with the following features:
+
+  1. Detailed Error Information
+
+  Each ValidationResult now includes:
+  - error_message: Human-readable description of the error with context
+  - error_code: Categorized ValidationErrorCode enum for programmatic handling
+  - error_position: Character position where the error was detected
+  - suggestion: Actionable advice on how to fix the error
+
+  2. Comprehensive Validation Checks
+
+  The enhanced validator now checks for:
+
+  Quote Validation:
+  - Unclosed single quotes with position tracking
+  - Unclosed double quotes with position tracking
+  - Unclosed backticks with position tracking
+
+  Operator Validation:
+  - Trailing operators (|, &&, ||, >, >>, etc.)
+  - Leading operators (pipes, logical operators, semicolons)
+  - Empty pipe/logical operator segments
+
+  Delimiter Balancing:
+  - Parentheses () with position tracking
+  - Braces {} with position tracking
+  - Brackets [] with position tracking
+  - Command substitution $() detection
+
+  Shell Control Flow:
+  - if/fi matching
+  - for/while/until/done matching
+  - case/esac matching (with special handling for ;; and ) syntax)
+
+  Command Structure:
+  - Empty commands
+  - Invalid variable assignments
+  - Consecutive semicolons (except valid ;; in case statements)
+  - Malformed redirections
+
+  3. Example Error Messages
+
+  Command: 'echo "hello'
+    Error: Unclosed double quote starting at position 5: 'echo "hello'
+    Suggestion: Add a closing double quote (") to match the opening quote
+
+  Command: 'ls |'
+    Error: Command ends with incomplete pipe operator '|'
+    Suggestion: Add a command after the pipe, e.g., 'cmd1 | cmd2'
+
+  Command: 'if true; then echo yes'
+    Error: Unclosed 'if' statement - missing 'fi' (1 unclosed)
+    Suggestion: Add 'fi' to close the 'if' statement: if condition; then commands; fi
