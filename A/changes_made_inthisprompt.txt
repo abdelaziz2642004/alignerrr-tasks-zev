@@ -1,0 +1,32 @@
+● All tests pass. The validation is correctly handling:
+
+  Escaped characters:
+  - Escaped quotes inside strings (\", \')
+  - Escaped spaces, newlines, tabs
+  - Escaped special characters (\$, \|)
+
+  Heredocs:
+  - Basic heredocs (<< EOF)
+  - Tab-stripping heredocs (<<- EOF)
+  - Quoted delimiter heredocs (<<'EOF')
+  - Here-strings (<<<)
+
+  Command substitution:
+  - Modern $(...) syntax
+  - Legacy backtick syntax
+  - Nested substitution
+  - Arithmetic expansion $(())
+
+  Process substitution:
+  - Input substitution <(...)
+  - Output substitution >(...)
+
+  Complex real-world commands:
+  - Git, curl, docker, awk, sed, find, ssh
+  - Complex pipe chains
+  - Conditionals, loops
+  - Brace/tilde expansion
+  - File descriptor redirections
+
+  The validator is not overly restrictive while still catching genuine syntax errors like unclosed quotes, trailing
+  operators, and unmatched delimiters.
