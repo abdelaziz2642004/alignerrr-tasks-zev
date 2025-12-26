@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from zev.command_selector import show_options
 from zev.constants import HISTORY_FILE_NAME
 from zev.llms.types import OptionsResponse
-from zev.workflow_executor import show_workflow
 
 
 class CommandHistoryEntry(BaseModel):
@@ -93,15 +92,11 @@ class CommandHistory:
         if selected_entry in (None, "Cancel"):
             return
 
-        # Check if this was a workflow response
-        if selected_entry.response.workflow and selected_entry.response.workflow.steps:
-            show_workflow(selected_entry.response.workflow)
-            return
-
         commands = selected_entry.response.commands
+        workflows = selected_entry.response.workflows
 
-        if not commands:
+        if not commands and not workflows:
             print("No commands available")
             return None
 
-        show_options(commands)
+        show_options(commands, workflows, original_query=selected_entry.query)

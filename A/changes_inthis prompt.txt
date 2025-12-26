@@ -1,53 +1,62 @@
- The implementation is complete. Let me provide a summary of the changes made:            )
+Summary
 
-  Summary
+  I've added workflow state persistence and resume functionality to zev. Here's what was implemented:
 
-  I've added multi-step workflow support to zev. Here's what was implemented:
+  1. New Module: src/zev/workflow_state.py
 
-  1. New Data Types (src/zev/llms/types.py)
+  - StepStatus: Enum for step states (PENDING, COMPLETED, FAILED, SKIPPED)
+  - WorkflowStepState: Tracks individual step status and exit code
+  - WorkflowExecutionState: Full workflow state including:
+    - Unique ID for each workflow execution
+    - Step states for all steps
+    - Timestamps (started_at, updated_at)
+    - Working directory where workflow was started
+    - Completion flag
+  - WorkflowStateManager: Handles state persistence to ~/.zev_workflows
+    - Creates, updates, and retrieves workflow states
+    - Finds next pending step for resume
+    - Cleans up old entries (keeps max 20)
 
-  - WorkflowStep: Represents a single step with step_number, command, description, is_dangerous,
-  dangerous_explanation, and depends_on_previous (boolean indicating dependency on previous step)
-  - Workflow: A named workflow with name, description, steps list, and is_dangerous flag
-  - OptionsResponse: Updated to include a workflows list alongside existing commands
+  2. Updated src/zev/command_selector.py
 
-  2. Updated LLM Prompt (src/zev/constants.py)
+  - run_workflow_all(): Now saves state on each step completion/failure
+    - Displays workflow ID at start
+    - Shows resume hint when workflow is interrupted
+    - Supports resuming from a specific step
+  - run_workflow_interactive(): Now saves state and has a "Pause workflow" option
+    - New "Pause" action to intentionally pause and resume later
+    - "Abort" marks workflow complete (won't appear in resume list)
+  - show_incomplete_workflows(): Lists all incomplete workflows with progress
+  - resume_workflow(): Resumes from next pending step
+  - display_workflow_state_overview(): Shows table with step statuses
 
-  - Enhanced prompt instructs the LLM to return both single commands AND multi-step workflows
-  - Provides guidance on when to use workflows (git operations, build processes, deployment, etc.)
-  - Includes example workflow structure for clarity
+  3. Updated src/zev/main.py
 
-  3. Updated Gemini Schema (src/zev/llms/gemini/provider.py)
+  - Added --resume flag handling that calls show_incomplete_workflows()
 
-  - Added JSON schema for workflow response format
+  4. Updated src/zev/utils.py
 
-  4. New Workflow UI (src/zev/command_selector.py)
+  - Added --resume to help text
 
-  - Selection: Workflows appear with a separator and "[Workflow]" prefix showing step count
-  - Overview: Displays a table showing all steps, commands, descriptions, and dependencies
-  - Execution modes:
-    - Run all: Executes all steps sequentially, stopping if a step fails and the next depends on it
-    - Copy all: Copies all commands to clipboard (newline-separated)
-    - Interactive: Step-by-step execution with options to run, skip, copy, or abort at each step
-  - Safety: Dangerous steps prompt for confirmation, warnings are shown prominently
+  5. Updated src/zev/constants.py
 
-  5. Updated Main Flow (src/zev/main.py)
+  - Added WORKFLOW_STATE_FILE_NAME = ".zev_workflows"
 
-  - Passes workflows to show_options() alongside commands
+  Usage
 
-  6. Updated History (src/zev/command_history.py)
+  # Start a workflow - it will show an ID
+  zev "commit and push my changes"
+  # Workflow ID: a1b2c3d4 (use 'zev --resume' if interrupted)
 
-  - History now stores and retrieves workflows alongside commands
+  # If interrupted or a step fails, resume later:
+  zev --resume
+  # Shows list of incomplete workflows with progress
+  # Select one to see status and resume options
 
-  Example Usage
+  Resume Options
 
-  When a user asks "commit and push my changes", zev can now return a workflow:
-  ┌─────────────────────────────────────────────────────────────┐
-  │              Workflow: Git commit and push                  │
-  ├──────┬──────────────────────────┬───────────────────┬───────┤
-  │ Step │ Command                  │ Description       │Depends│
-  ├──────┼──────────────────────────┼───────────────────┼───────┤
-  │  1   │ git add .                │ Stage all changes │  No   │
-  │  2   │ git commit -m 'message'  │ Commit changes    │  Yes  │
-  │  3   │ git push                 │ Push to remote    │  Yes  │
-  └──────┴──────────────────────────┴───────────────────┴───────┘
+  When resuming, users can:
+  1. Run remaining steps sequentially - Continue from where they left off
+  2. Step through interactively - Review each remaining step
+  3. Discard this workflow - Remove from incomplete list
+  4. Cancel - Return without resuming

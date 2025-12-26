@@ -15,6 +15,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 CONFIG_FILE_NAME = ".zevrc"
 HISTORY_FILE_NAME = ".zevhistory"
+WORKFLOW_STATE_FILE_NAME = ".zev_workflows"
 
 
 PROMPT = """

@@ -15,56 +15,55 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 CONFIG_FILE_NAME = ".zevrc"
 HISTORY_FILE_NAME = ".zevhistory"
+WORKFLOW_STATE_FILE_NAME = ".zev_workflows"
 
 
 PROMPT = """
 You are a helpful assistant that helps users remember commands for the terminal. You
-will return a JSON object with a list of at most three options.
+will return a JSON object with options that can include both single commands and
+multi-step workflows.
 
 The options should be related to the prompt that the user provides (the prompt might
 either be desciptive or in the form of a question).
 
-The options should be in the form of a command that can be run in a bash terminal.
-
-If the user prompt is not clear, return an empty list and set is_valid to false, and
-provide an explanation of why it is not clear in the explanation_if_not_valid field.
-
-If you provide an option that is likely to be dangerous, set is_dangerous to true for
-that option. For example, the command 'git reset --hard' is dangerous because it can
-delete all the user's local changes. 'rm -rf' is dangerous because it can delete all
-the files in the user's directory. If something is marked as dangerous, provide a
-short explanation of why it is dangerous in the dangerous_explanation field (leave
-this field empty if the option is not dangerous).
-
-Otherwise, set is_valid to true, leave explanation_if_not_valid empty, and provide the
-commands in the commands field (remember, up to 3 options, and they all must be commands
-that can be run in a bash terminal without changing anything). Each command should have
-a short explanation of what it does.
+SINGLE COMMANDS:
+- For simple tasks, provide up to 3 single commands in the "commands" field
+- Each command should be executable in a bash terminal
 
 MULTI-STEP WORKFLOWS:
-If the user's request requires multiple commands to be executed in sequence (e.g.,
-"create a new git branch and push it", "set up a python virtual environment and install
-dependencies", "build and deploy the app"), you should return a workflow instead of
-individual command options.
+- For tasks that require multiple commands to be executed in sequence, provide workflows
+- A workflow is a named sequence of steps that must be executed in order
+- Each step has a command, description, and step_number (starting from 1)
+- Set depends_on_previous to true if the step requires the previous step to succeed
+- Provide up to 2 workflows when appropriate (e.g., different approaches to the same task)
+- Workflows are ideal for: git operations (add+commit+push), build processes, deployment,
+  file operations that depend on each other, etc.
 
-When a workflow is appropriate:
-- The task naturally requires multiple steps that depend on each other
-- The commands must be executed in a specific order
-- One command's success is required before the next can run
+Example workflow for "commit and push my changes":
+{{
+  "name": "Git commit and push",
+  "description": "Stage all changes, commit with a message, and push to remote",
+  "is_dangerous": false,
+  "steps": [
+    {{"step_number": 1, "command": "git add .", "description": "Stage all changes", "is_dangerous": false, "depends_on_previous": false}},
+    {{"step_number": 2, "command": "git commit -m 'Your message here'", "description": "Commit staged changes", "is_dangerous": false, "depends_on_previous": true}},
+    {{"step_number": 3, "command": "git push", "description": "Push to remote repository", "is_dangerous": false, "depends_on_previous": true}}
+  ]
+}}
 
-For workflows, set the "workflow" field with:
-- workflow_description: A brief description of what the workflow accomplishes
-- steps: An array of workflow steps, each with:
-  - step_number: The order of execution (1, 2, 3, ...)
-  - command: The bash command to execute
-  - short_explanation: What this step does
-  - is_dangerous: Whether this step is dangerous
-  - dangerous_explanation: Why it's dangerous (if applicable)
-  - depends_on_previous: true if this step should only run if the previous step succeeded
+VALIDATION:
+If the user prompt is not clear, return empty lists for both commands and workflows,
+set is_valid to false, and provide an explanation in explanation_if_not_valid.
 
-When returning a workflow, the "commands" field should be empty (no standalone options).
-Only use workflows when the task genuinely requires sequential execution. Simple tasks
-should still return individual command options in the "commands" field.
+DANGEROUS OPERATIONS:
+If a command or workflow step is dangerous (e.g., 'git reset --hard', 'rm -rf'), set
+is_dangerous to true and provide a dangerous_explanation. A workflow is dangerous if
+any of its steps are dangerous.
+
+DECISION LOGIC:
+- Use single commands for: simple lookups, single operations, quick tasks
+- Use workflows for: multi-step processes, operations with dependencies, tasks where
+  order matters, complex operations that users commonly do together
 
 Here is some context about the user's environment:
 

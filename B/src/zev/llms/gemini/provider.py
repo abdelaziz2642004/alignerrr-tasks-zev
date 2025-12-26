@@ -29,37 +29,45 @@ GEMINI_RESPONSE_SCHEMA = {
                     ],
                 },
             },
-            "is_valid": {"type": "BOOLEAN"},
-            "explanation_if_not_valid": {"type": "STRING"},
-            "workflow": {
-                "type": "OBJECT",
-                "nullable": True,
-                "properties": {
-                    "workflow_description": {"type": "STRING"},
-                    "steps": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "step_number": {"type": "INTEGER"},
-                                "command": {"type": "STRING"},
-                                "short_explanation": {"type": "STRING"},
-                                "is_dangerous": {"type": "BOOLEAN"},
-                                "dangerous_explanation": {"type": "STRING"},
-                                "depends_on_previous": {"type": "BOOLEAN"},
+            "workflows": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "name": {"type": "STRING"},
+                        "description": {"type": "STRING"},
+                        "is_dangerous": {"type": "BOOLEAN"},
+                        "steps": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "step_number": {"type": "INTEGER"},
+                                    "command": {"type": "STRING"},
+                                    "description": {"type": "STRING"},
+                                    "is_dangerous": {"type": "BOOLEAN"},
+                                    "dangerous_explanation": {"type": "STRING"},
+                                    "depends_on_previous": {"type": "BOOLEAN"},
+                                },
+                                "required": [
+                                    "step_number",
+                                    "command",
+                                    "description",
+                                    "is_dangerous",
+                                ],
                             },
-                            "required": [
-                                "step_number",
-                                "command",
-                                "short_explanation",
-                                "is_dangerous",
-                                "depends_on_previous",
-                            ],
                         },
                     },
+                    "required": [
+                        "name",
+                        "description",
+                        "is_dangerous",
+                        "steps",
+                    ],
                 },
-                "required": ["workflow_description", "steps"],
             },
+            "is_valid": {"type": "BOOLEAN"},
+            "explanation_if_not_valid": {"type": "STRING"},
         },
         "required": [
             "commands",

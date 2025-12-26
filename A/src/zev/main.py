@@ -6,7 +6,7 @@ from rich import print as rprint
 from rich.console import Console
 
 from zev.command_history import CommandHistory
-from zev.command_selector import show_options
+from zev.command_selector import show_incomplete_workflows, show_options
 from zev.config import config
 from zev.config.setup import run_setup
 from zev.constants import CONFIG_FILE_NAME
@@ -78,6 +78,10 @@ def handle_special_case(args):
 
     if command == "--help" or command == "-h":
         show_help()
+        return True
+
+    if command == "--resume":
+        show_incomplete_workflows()
         return True
 
     return False

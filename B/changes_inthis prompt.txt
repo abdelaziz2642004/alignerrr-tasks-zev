@@ -1,51 +1,49 @@
-The implementation is complete. Here's a summary of the changes made:
+  Summary: Workflow State Persistence and Resume
 
-  Summary of Changes
+  New Files Created:
 
-  1. src/zev/llms/types.py - Extended data models
+  - src/zev/workflow_state.py: Manages workflow state persistence
+    - WorkflowStateManager: Handles saving/loading workflow states to ~/.zev_workflows
+    - show_incomplete_workflows(): Displays incomplete workflows in a table
+    - display_workflow_state_details(): Shows detailed state of a specific workflow
 
-  - Added WorkflowStep class with fields: step_number, command, short_explanation, is_dangerous,
-  dangerous_explanation, depends_on_previous
-  - Added Workflow class with workflow_description and steps list
-  - Added optional workflow field to OptionsResponse
+  Modified Files:
 
-  2. src/zev/constants.py - Updated LLM prompt
+  1. src/zev/llms/types.py: Added workflow state types
+    - StepStatus enum: PENDING, COMPLETED, FAILED, SKIPPED
+    - WorkflowStepState: Tracks individual step status and exit codes
+    - WorkflowState: Full workflow state with helper methods like mark_step_completed(), get_next_pending_step()
+  2. src/zev/constants.py: Added WORKFLOW_STATE_FILE_NAME = ".zev_workflows"
+  3. src/zev/command_selector.py:
+    - Updated run_workflow_all() and run_workflow_interactive() to save state on each step
+    - State is saved on: completion, failure, skip, or abort
+    - Added resume_workflow() function to handle resuming from saved state
+    - Shows "Resume with: zev --resume" message when workflow is interrupted
+  4. src/zev/main.py:
+    - Added --resume flag handling
+    - Added handle_resume_workflows() function
+    - Passes original_query to show_options()
+  5. src/zev/command_history.py: Updated to pass original query when replaying from history
+  6. src/zev/utils.py: Updated help text to include --resume option
 
-  - Added detailed instructions for when to return a workflow vs individual commands
-  - Documented the workflow schema (steps with dependencies)
-  - Provided guidance on when workflows are appropriate (sequential tasks, dependent commands)
+  Usage:
 
-  3. src/zev/llms/gemini/provider.py - Updated Gemini JSON schema
+  # When a workflow is interrupted, it shows:
+  # "Workflow state saved. Resume with: zev --resume"
 
-  - Extended GEMINI_RESPONSE_SCHEMA to include the workflow object structure with all required fields
+  # To resume incomplete workflows:
+  zev --resume
 
-  4. src/zev/workflow_executor.py - New module for workflow execution
+  # Shows a table of incomplete workflows with:
+  # - Workflow ID
+  # - Name
+  # - Progress (e.g., "2/5 (1 failed)")
+  # - Original query
+  # - Last updated time
 
-  - show_workflow() - Displays workflow summary and prompts user to execute
-  - display_workflow_summary() - Shows all steps with danger indicators and dependencies
-  - execute_workflow() - Executes steps sequentially with:
-    - Dependency checking (skips steps if previous dependent step failed)
-    - Dangerous step confirmation
-    - Per-step execution confirmation
-    - Continue/abort prompts on failure
-  - display_execution_summary() - Shows completion statistics
-
-  5. src/zev/main.py - Handle workflow responses
-
-  - Added import for show_workflow
-  - Added workflow detection in get_options() - checks if response has a workflow and routes to workflow
-  executor
-
-  6. src/zev/command_history.py - Workflow history support
-
-  - Added import for show_workflow
-  - Updated show_history() to replay workflows from history
-
-  Key Features:
-
-  - Backward compatible - Single commands still work as before
-  - Dependency tracking - Steps can depend on previous steps succeeding
-  - Dangerous step handling - Each dangerous step requires explicit confirmation
-  - Interactive execution - User can skip steps or abort the workflow
-  - History support - Workflows are saved and can be replayed from history
-  - Execution summary - Shows completed/failed/skipped steps after workflow runs
+  # Resume options:
+  # - Run remaining steps sequentially
+  # - Step through interactively
+  # - Retry failed step(s) first
+  # - Discard workflow and cancel
+  # - Cancel (keep saved state)
