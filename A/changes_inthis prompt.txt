@@ -1,62 +1,46 @@
-Summary
+The implementation is complete. Here's a summary of the changes:
 
-  I've added workflow state persistence and resume functionality to zev. Here's what was implemented:
+  Summary: Workflow Variables Support
 
-  1. New Module: src/zev/workflow_state.py
+  New File Created:
 
-  - StepStatus: Enum for step states (PENDING, COMPLETED, FAILED, SKIPPED)
-  - WorkflowStepState: Tracks individual step status and exit code
-  - WorkflowExecutionState: Full workflow state including:
-    - Unique ID for each workflow execution
-    - Step states for all steps
-    - Timestamps (started_at, updated_at)
-    - Working directory where workflow was started
-    - Completion flag
-  - WorkflowStateManager: Handles state persistence to ~/.zev_workflows
-    - Creates, updates, and retrieves workflow states
-    - Finds next pending step for resume
-    - Cleans up old entries (keeps max 20)
+  - src/zev/workflow_variables.py: Variable extraction and substitution utilities
+    - VARIABLE_PATTERN: Regex to match {{variable_name}} or {{variable_name:description}}
+    - extract_variables_from_workflow(): Extract all unique variables from a workflow
+    - substitute_variables(): Replace variable placeholders with actual values
+    - prompt_for_variables(): Interactive prompt for variable values (with existing values as defaults)
+    - has_variables(): Check if a workflow contains any variables
+    - display_variables_summary(): Show current variable values
 
-  2. Updated src/zev/command_selector.py
+  Modified Files:
 
-  - run_workflow_all(): Now saves state on each step completion/failure
-    - Displays workflow ID at start
-    - Shows resume hint when workflow is interrupted
-    - Supports resuming from a specific step
-  - run_workflow_interactive(): Now saves state and has a "Pause workflow" option
-    - New "Pause" action to intentionally pause and resume later
-    - "Abort" marks workflow complete (won't appear in resume list)
-  - show_incomplete_workflows(): Lists all incomplete workflows with progress
-  - resume_workflow(): Resumes from next pending step
-  - display_workflow_state_overview(): Shows table with step statuses
+  1. src/zev/llms/types.py:
+    - Added variables: dict[str, str] field to WorkflowState model
+  2. src/zev/constants.py:
+    - Updated LLM prompt to include variable syntax documentation and examples
+    - Shows how to use {{variable_name}} and {{variable_name:description}}
+  3. src/zev/command_selector.py:
+    - handle_workflow(): Checks for variables and prompts user before execution
+    - run_workflow_all(): Accepts variables, stores in state, substitutes in commands
+    - run_workflow_interactive(): Same variable support as run_all
+    - copy_workflow_commands(): Substitutes variables before copying
+    - resume_workflow(): Displays saved variables, allows editing before resuming
 
-  3. Updated src/zev/main.py
+  Usage Example:
 
-  - Added --resume flag handling that calls show_incomplete_workflows()
+  When a workflow contains variables like:
+  git checkout -b {{branch_name:Name for new branch}}
+  git commit -m '{{commit_message}}'
 
-  4. Updated src/zev/utils.py
+  The user will see:
+  This workflow requires the following variables:
 
-  - Added --resume to help text
+  ? Branch Name (Name for new branch): feature/my-feature
+  ? Commit Message: Add new feature
 
-  5. Updated src/zev/constants.py
+  Variables:
+    branch_name = feature/my-feature
+    commit_message = Add new feature
 
-  - Added WORKFLOW_STATE_FILE_NAME = ".zev_workflows"
-
-  Usage
-
-  # Start a workflow - it will show an ID
-  zev "commit and push my changes"
-  # Workflow ID: a1b2c3d4 (use 'zev --resume' if interrupted)
-
-  # If interrupted or a step fails, resume later:
-  zev --resume
-  # Shows list of incomplete workflows with progress
-  # Select one to see status and resume options
-
-  Resume Options
-
-  When resuming, users can:
-  1. Run remaining steps sequentially - Continue from where they left off
-  2. Step through interactively - Review each remaining step
-  3. Discard this workflow - Remove from incomplete list
-  4. Cancel - Return without resuming
+  When resuming an interrupted workflow, the saved variable values are preserved and the user can choose to
+  "Edit variables before resuming" if needed.

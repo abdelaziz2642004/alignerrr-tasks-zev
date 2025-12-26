@@ -39,6 +39,12 @@ MULTI-STEP WORKFLOWS:
 - Workflows are ideal for: git operations (add+commit+push), build processes, deployment,
   file operations that depend on each other, etc.
 
+WORKFLOW VARIABLES:
+- Use {{{{variable_name}}}} syntax for user-provided values (branch names, commit messages, file paths, etc.)
+- Variable names should be lowercase with underscores (e.g., {{{{branch_name}}}}, {{{{commit_message}}}}, {{{{file_path}}}})
+- The user will be prompted to provide values for these variables before execution
+- Use variables when the command requires user-specific input that can't be predetermined
+
 Example workflow for "commit and push my changes":
 {{
   "name": "Git commit and push",
@@ -46,8 +52,19 @@ Example workflow for "commit and push my changes":
   "is_dangerous": false,
   "steps": [
     {{"step_number": 1, "command": "git add .", "description": "Stage all changes", "is_dangerous": false, "depends_on_previous": false}},
-    {{"step_number": 2, "command": "git commit -m 'Your message here'", "description": "Commit staged changes", "is_dangerous": false, "depends_on_previous": true}},
+    {{"step_number": 2, "command": "git commit -m '{{{{commit_message}}}}'", "description": "Commit staged changes", "is_dangerous": false, "depends_on_previous": true}},
     {{"step_number": 3, "command": "git push", "description": "Push to remote repository", "is_dangerous": false, "depends_on_previous": true}}
+  ]
+}}
+
+Example workflow with variables for "create a new feature branch":
+{{
+  "name": "Create feature branch",
+  "description": "Create and switch to a new feature branch",
+  "is_dangerous": false,
+  "steps": [
+    {{"step_number": 1, "command": "git checkout -b {{{{branch_name}}}}", "description": "Create and switch to new branch", "is_dangerous": false, "depends_on_previous": false}},
+    {{"step_number": 2, "command": "git push -u origin {{{{branch_name}}}}", "description": "Push branch to remote and set upstream", "is_dangerous": false, "depends_on_previous": true}}
   ]
 }}
 

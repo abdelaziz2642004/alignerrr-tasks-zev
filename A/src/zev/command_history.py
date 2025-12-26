@@ -99,4 +99,4 @@ class CommandHistory:
             print("No commands available")
             return None
 
-        show_options(commands, workflows)
+        show_options(commands, workflows, original_query=selected_entry.query)

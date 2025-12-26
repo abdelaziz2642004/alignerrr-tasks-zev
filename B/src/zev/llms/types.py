@@ -53,6 +53,7 @@ class WorkflowState(BaseModel):
     workflow: Workflow
     original_query: str
     step_states: list[WorkflowStepState]
+    variables: dict[str, str] = Field(default_factory=dict)
     started_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     is_complete: bool = False

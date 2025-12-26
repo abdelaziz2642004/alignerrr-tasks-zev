@@ -39,6 +39,25 @@ MULTI-STEP WORKFLOWS:
 - Workflows are ideal for: git operations (add+commit+push), build processes, deployment,
   file operations that depend on each other, etc.
 
+WORKFLOW VARIABLES:
+- Use {{{{variable_name}}}} syntax for user-provided values in workflow commands
+- Variables will be prompted before execution
+- Optionally add a description: {{{{variable_name:description}}}}
+- Common variables: branch_name, commit_message, file_path, version, tag_name
+- Example: "git checkout -b {{{{branch_name}}}}" or "git commit -m '{{{{commit_message:Enter your commit message}}}}'"
+
+Example workflow for "create a new feature branch and commit":
+{{
+  "name": "Create feature branch with initial commit",
+  "description": "Create a new branch, make changes, and commit",
+  "is_dangerous": false,
+  "steps": [
+    {{"step_number": 1, "command": "git checkout -b {{{{branch_name:Name for the new branch}}}}", "description": "Create and switch to new branch", "is_dangerous": false, "depends_on_previous": false}},
+    {{"step_number": 2, "command": "git add .", "description": "Stage all changes", "is_dangerous": false, "depends_on_previous": true}},
+    {{"step_number": 3, "command": "git commit -m '{{{{commit_message}}}}'", "description": "Commit with message", "is_dangerous": false, "depends_on_previous": true}}
+  ]
+}}
+
 Example workflow for "commit and push my changes":
 {{
   "name": "Git commit and push",
@@ -46,7 +65,7 @@ Example workflow for "commit and push my changes":
   "is_dangerous": false,
   "steps": [
     {{"step_number": 1, "command": "git add .", "description": "Stage all changes", "is_dangerous": false, "depends_on_previous": false}},
-    {{"step_number": 2, "command": "git commit -m 'Your message here'", "description": "Commit staged changes", "is_dangerous": false, "depends_on_previous": true}},
+    {{"step_number": 2, "command": "git commit -m '{{{{commit_message}}}}'", "description": "Commit staged changes", "is_dangerous": false, "depends_on_previous": true}},
     {{"step_number": 3, "command": "git push", "description": "Push to remote repository", "is_dangerous": false, "depends_on_previous": true}}
   ]
 }}

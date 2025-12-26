@@ -1,3 +1,4 @@
+import re
 from subprocess import run as run_command
 from typing import Optional
 
@@ -10,6 +11,10 @@ from rich.table import Table
 from zev.llms.types import Command, StepStatus, Workflow, WorkflowState
 
 
+# Regex pattern to match {{variable_name}} syntax
+VARIABLE_PATTERN = re.compile(r'\{\{(\w+)\}\}')
+
+
 # Global reference to workflow state manager (lazy loaded to avoid circular imports)
 _workflow_state_manager = None
 
@@ -20,6 +25,72 @@ def _get_workflow_state_manager():
         from zev.workflow_state import workflow_state_manager
         _workflow_state_manager = workflow_state_manager
     return _workflow_state_manager
+
+
+def extract_variables(workflow: Workflow) -> list[str]:
+    """Extract all unique variable names from workflow commands."""
+    variables = set()
+    for step in workflow.steps:
+        matches = VARIABLE_PATTERN.findall(step.command)
+        variables.update(matches)
+    return sorted(variables)
+
+
+def substitute_variables(command: str, variables: dict[str, str]) -> str:
+    """Replace {{variable_name}} placeholders with actual values."""
+    def replace_var(match):
+        var_name = match.group(1)
+        return variables.get(var_name, match.group(0))
+    return VARIABLE_PATTERN.sub(replace_var, command)
+
+
+def prompt_for_variables(variables: list[str], existing_values: dict[str, str] = None) -> Optional[dict[str, str]]:
+    """Prompt user to provide values for workflow variables."""
+    existing_values = existing_values or {}
+    values = {}
+
+    if not variables:
+        return values
+
+    rprint("\n[bold cyan]This workflow requires input values:[/bold cyan]\n")
+
+    style = questionary.Style(
+        [
+            ("qmark", "#98c379"),
+            ("question", "#98c379"),
+            ("instruction", "italic #646464"),
+        ]
+    )
+
+    for var_name in variables:
+        # Use existing value as default if available (for resume scenarios)
+        default = existing_values.get(var_name, "")
+        display_name = var_name.replace("_", " ").title()
+
+        prompt_text = f"  {display_name}"
+        if default:
+            prompt_text += f" (current: {default})"
+
+        value = questionary.text(
+            message=prompt_text,
+            default=default,
+            style=style,
+        ).ask()
+
+        if value is None:  # User pressed Ctrl-C
+            return None
+
+        values[var_name] = value
+
+    return values
+
+
+def has_variables(workflow: Workflow) -> bool:
+    """Check if a workflow contains any variables."""
+    for step in workflow.steps:
+        if VARIABLE_PATTERN.search(step.command):
+            return True
+    return False
 
 
 def show_options(commands: list[Command], workflows: list[Workflow] = None, original_query: str = ""):
@@ -106,6 +177,22 @@ def handle_workflow(workflow: Workflow, original_query: str = ""):
             if step.is_dangerous and step.dangerous_explanation:
                 rprint(f"[red]  Step {step.step_number}: {step.dangerous_explanation}[/red]")
 
+    # Check for and collect variables
+    variables = extract_variables(workflow)
+    variable_values = {}
+    if variables:
+        rprint(f"\n[dim]Variables detected: {', '.join('{{' + v + '}}' for v in variables)}[/dim]")
+        variable_values = prompt_for_variables(variables)
+        if variable_values is None:
+            rprint("[yellow]Cancelled.[/yellow]")
+            return
+
+        # Show preview of commands with substituted variables
+        rprint("\n[bold]Commands with your values:[/bold]")
+        for step in workflow.steps:
+            substituted = substitute_variables(step.command, variable_values)
+            rprint(f"[dim]  {step.step_number}.[/dim] [green]{substituted}[/green]")
+
     # Ask user what they want to do
     action = questionary.select(
         "\nWhat would you like to do?",
@@ -125,11 +212,11 @@ def handle_workflow(workflow: Workflow, original_query: str = ""):
     ).ask()
 
     if action == "run_all":
-        run_workflow_all(workflow, original_query)
+        run_workflow_all(workflow, original_query, variable_values=variable_values)
     elif action == "copy_all":
-        copy_workflow_commands(workflow)
+        copy_workflow_commands(workflow, variable_values)
     elif action == "interactive":
-        run_workflow_interactive(workflow, original_query)
+        run_workflow_interactive(workflow, original_query, variable_values=variable_values)
 
 
 def display_workflow_overview(console: Console, workflow: Workflow):
@@ -153,12 +240,20 @@ def display_workflow_overview(console: Console, workflow: Workflow):
     console.print(f"\n[dim]{workflow.description}[/dim]")
 
 
-def run_workflow_all(workflow: Workflow, original_query: str = "", state: Optional[WorkflowState] = None, start_from_step: int = 1):
+def run_workflow_all(workflow: Workflow, original_query: str = "", state: Optional[WorkflowState] = None, start_from_step: int = 1, variable_values: dict[str, str] = None):
     manager = _get_workflow_state_manager()
+    variable_values = variable_values or {}
 
     # Create state if not provided (new workflow execution)
     if state is None:
         state = manager.create_workflow_state(workflow, original_query)
+        # Store variable values in state for resume
+        state.variables = variable_values
+    else:
+        # Use existing variables from state, update with any new values
+        if variable_values:
+            state.variables.update(variable_values)
+        variable_values = state.variables
 
     rprint("\n[bold cyan]Running workflow...[/bold cyan]\n")
 
@@ -167,8 +262,11 @@ def run_workflow_all(workflow: Workflow, original_query: str = "", state: Option
         if step.step_number < start_from_step:
             continue
 
+        # Substitute variables in command
+        actual_command = substitute_variables(step.command, variable_values)
+
         rprint(f"[bold]Step {step.step_number}:[/bold] {step.description}")
-        rprint(f"[dim]$ {step.command}[/dim]")
+        rprint(f"[dim]$ {actual_command}[/dim]")
 
         if step.is_dangerous and step.dangerous_explanation:
             rprint(f"[red]Warning: {step.dangerous_explanation}[/red]")
@@ -178,7 +276,7 @@ def run_workflow_all(workflow: Workflow, original_query: str = "", state: Option
                 rprint(f"[dim]Workflow state saved. Resume with: zev --resume[/dim]")
                 return
 
-        result = run_command(step.command, shell=True)
+        result = run_command(actual_command, shell=True)
 
         if result.returncode != 0:
             state.mark_step_failed(step.step_number, result.returncode)
@@ -202,30 +300,41 @@ def run_workflow_all(workflow: Workflow, original_query: str = "", state: Option
     rprint("[bold green]Workflow completed successfully![/bold green]")
 
 
-def copy_workflow_commands(workflow: Workflow):
-    # Join all commands with newlines for easy pasting
-    all_commands = "\n".join(step.command for step in workflow.steps)
+def copy_workflow_commands(workflow: Workflow, variable_values: dict[str, str] = None):
+    variable_values = variable_values or {}
+    # Join all commands with newlines for easy pasting (with variable substitution)
+    all_commands = "\n".join(substitute_variables(step.command, variable_values) for step in workflow.steps)
     try:
         pyperclip.copy(all_commands)
         rprint(f"[green]✓[/green] Copied {len(workflow.steps)} commands to clipboard")
         rprint("\n[dim]Commands copied:[/dim]")
         for step in workflow.steps:
-            rprint(f"[dim]  {step.step_number}. {step.command}[/dim]")
+            actual_command = substitute_variables(step.command, variable_values)
+            rprint(f"[dim]  {step.step_number}. {actual_command}[/dim]")
     except pyperclip.PyperclipException:
         rprint(
             "[red]Could not copy to clipboard (see https://github.com/dtnewman/zev?tab=readme-ov-file#-dependencies)[/red]\n"
         )
         rprint("[cyan]Here are your commands:[/cyan]")
         for step in workflow.steps:
-            print(f"{step.step_number}. {step.command}")
+            actual_command = substitute_variables(step.command, variable_values)
+            print(f"{step.step_number}. {actual_command}")
 
 
-def run_workflow_interactive(workflow: Workflow, original_query: str = "", state: Optional[WorkflowState] = None, start_from_step: int = 1):
+def run_workflow_interactive(workflow: Workflow, original_query: str = "", state: Optional[WorkflowState] = None, start_from_step: int = 1, variable_values: dict[str, str] = None):
     manager = _get_workflow_state_manager()
+    variable_values = variable_values or {}
 
     # Create state if not provided (new workflow execution)
     if state is None:
         state = manager.create_workflow_state(workflow, original_query)
+        # Store variable values in state for resume
+        state.variables = variable_values
+    else:
+        # Use existing variables from state, update with any new values
+        if variable_values:
+            state.variables.update(variable_values)
+        variable_values = state.variables
 
     rprint("\n[bold cyan]Interactive workflow mode[/bold cyan]")
     rprint("[dim]You will be prompted before each step.[/dim]\n")
@@ -235,8 +344,11 @@ def run_workflow_interactive(workflow: Workflow, original_query: str = "", state
         if step.step_number < start_from_step:
             continue
 
+        # Substitute variables in command
+        actual_command = substitute_variables(step.command, variable_values)
+
         rprint(f"\n[bold]Step {step.step_number}/{len(workflow.steps)}:[/bold] {step.description}")
-        rprint(f"[cyan]$ {step.command}[/cyan]")
+        rprint(f"[cyan]$ {actual_command}[/cyan]")
 
         if step.is_dangerous and step.dangerous_explanation:
             rprint(f"[red]Warning: {step.dangerous_explanation}[/red]")
@@ -274,7 +386,7 @@ def run_workflow_interactive(workflow: Workflow, original_query: str = "", state
             continue
         elif action == "copy":
             try:
-                pyperclip.copy(step.command)
+                pyperclip.copy(actual_command)
                 rprint(f"[green]✓[/green] Copied to clipboard")
             except pyperclip.PyperclipException:
                 rprint(f"[red]Could not copy to clipboard[/red]")
@@ -282,7 +394,7 @@ def run_workflow_interactive(workflow: Workflow, original_query: str = "", state
             # Re-prompt for the same step
             continue
         elif action == "run":
-            result = run_command(step.command, shell=True)
+            result = run_command(actual_command, shell=True)
             if result.returncode != 0:
                 state.mark_step_failed(step.step_number, result.returncode)
                 manager.save_state(state)
@@ -307,6 +419,12 @@ def resume_workflow(state: WorkflowState):
     # Display current state
     display_workflow_state_details(state)
 
+    # Show saved variables if any
+    if state.variables:
+        rprint("\n[bold]Saved variable values:[/bold]")
+        for var_name, var_value in state.variables.items():
+            rprint(f"  [dim]{var_name}:[/dim] [green]{var_value}[/green]")
+
     next_step = state.get_next_pending_step()
     if next_step is None:
         rprint("\n[green]This workflow is already complete![/green]")
@@ -319,16 +437,24 @@ def resume_workflow(state: WorkflowState):
 
     rprint(f"\n[cyan]Will resume from step {next_step}[/cyan]")
 
+    # Build choices list
+    choices = [
+        questionary.Choice("Run remaining steps sequentially", value="run_all"),
+        questionary.Choice("Step through interactively", value="interactive"),
+    ]
+    if failed_steps:
+        choices.append(questionary.Choice("Retry failed step(s) first", value="retry"))
+    if state.variables:
+        choices.append(questionary.Choice("Update variable values", value="update_vars"))
+    choices.extend([
+        questionary.Choice("Discard workflow and cancel", value="discard"),
+        questionary.Choice("Cancel (keep saved state)", value="cancel"),
+    ])
+
     # Ask user what they want to do
     action = questionary.select(
         "\nHow would you like to resume?",
-        choices=[
-            questionary.Choice("Run remaining steps sequentially", value="run_all"),
-            questionary.Choice("Step through interactively", value="interactive"),
-            questionary.Choice("Retry failed step(s) first", value="retry") if failed_steps else None,
-            questionary.Choice("Discard workflow and cancel", value="discard"),
-            questionary.Choice("Cancel (keep saved state)", value="cancel"),
-        ],
+        choices=choices,
         style=questionary.Style(
             [
                 ("answer", "fg:#61afef"),
@@ -345,6 +471,19 @@ def resume_workflow(state: WorkflowState):
         manager = _get_workflow_state_manager()
         manager.delete_workflow(state.workflow_id)
         rprint("[yellow]Workflow discarded.[/yellow]")
+        return
+    elif action == "update_vars":
+        # Allow user to update variable values
+        variables = list(state.variables.keys())
+        new_values = prompt_for_variables(variables, state.variables)
+        if new_values is None:
+            rprint("[yellow]Cancelled.[/yellow]")
+            return
+        state.variables.update(new_values)
+        manager = _get_workflow_state_manager()
+        manager.save_state(state)
+        # Recursively show resume menu again
+        resume_workflow(state)
         return
     elif action == "retry":
         # Reset failed steps to pending and resume from first failed

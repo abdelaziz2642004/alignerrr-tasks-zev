@@ -1,49 +1,45 @@
-  Summary: Workflow State Persistence and Resume
+The implementation is complete. Here's a summary of the changes made:
 
-  New Files Created:
-
-  - src/zev/workflow_state.py: Manages workflow state persistence
-    - WorkflowStateManager: Handles saving/loading workflow states to ~/.zev_workflows
-    - show_incomplete_workflows(): Displays incomplete workflows in a table
-    - display_workflow_state_details(): Shows detailed state of a specific workflow
+  Summary: Workflow Variables Support
 
   Modified Files:
 
-  1. src/zev/llms/types.py: Added workflow state types
-    - StepStatus enum: PENDING, COMPLETED, FAILED, SKIPPED
-    - WorkflowStepState: Tracks individual step status and exit codes
-    - WorkflowState: Full workflow state with helper methods like mark_step_completed(), get_next_pending_step()
-  2. src/zev/constants.py: Added WORKFLOW_STATE_FILE_NAME = ".zev_workflows"
-  3. src/zev/command_selector.py:
-    - Updated run_workflow_all() and run_workflow_interactive() to save state on each step
-    - State is saved on: completion, failure, skip, or abort
-    - Added resume_workflow() function to handle resuming from saved state
-    - Shows "Resume with: zev --resume" message when workflow is interrupted
-  4. src/zev/main.py:
-    - Added --resume flag handling
-    - Added handle_resume_workflows() function
-    - Passes original_query to show_options()
-  5. src/zev/command_history.py: Updated to pass original query when replaying from history
-  6. src/zev/utils.py: Updated help text to include --resume option
+  1. src/zev/llms/types.py:
+    - Added variables: dict[str, str] field to WorkflowState to persist variable values across sessions
+  2. src/zev/command_selector.py:
+    - Added VARIABLE_PATTERN regex to match {{variable_name}} syntax
+    - Added extract_variables(workflow) - extracts all unique variable names from a workflow
+    - Added substitute_variables(command, variables) - replaces placeholders with actual values
+    - Added prompt_for_variables(variables, existing_values) - prompts user to enter values
+    - Added has_variables(workflow) - checks if workflow contains variables
+    - Updated handle_workflow() to detect variables, prompt for values, and show preview
+    - Updated run_workflow_all() to use variable substitution and save values to state
+    - Updated run_workflow_interactive() to use variable substitution and save values to state
+    - Updated copy_workflow_commands() to apply variable substitution
+    - Updated resume_workflow() to show saved variables and allow updating them
+  3. src/zev/constants.py:
+    - Updated LLM prompt with WORKFLOW VARIABLES section explaining the {{variable_name}} syntax
+    - Added examples showing variables like {{commit_message}} and {{branch_name}}
 
   Usage:
 
-  # When a workflow is interrupted, it shows:
-  # "Workflow state saved. Resume with: zev --resume"
+  When the LLM returns a workflow with variables like:
+  git checkout -b {{branch_name}}
+  git commit -m '{{commit_message}}'
 
-  # To resume incomplete workflows:
-  zev --resume
+  The user will see:
+  Variables detected: {{branch_name}}, {{commit_message}}
 
-  # Shows a table of incomplete workflows with:
-  # - Workflow ID
-  # - Name
-  # - Progress (e.g., "2/5 (1 failed)")
-  # - Original query
-  # - Last updated time
+  This workflow requires input values:
 
-  # Resume options:
-  # - Run remaining steps sequentially
-  # - Step through interactively
-  # - Retry failed step(s) first
-  # - Discard workflow and cancel
-  # - Cancel (keep saved state)
+    Branch Name: feature/my-feature
+    Commit Message: Add new feature
+
+  Commands with your values:
+    1. git checkout -b feature/my-feature
+    2. git commit -m 'Add new feature'
+
+  When resuming an interrupted workflow with zev --resume, variables are:
+  - Displayed with their saved values
+  - Can be updated via "Update variable values" option
+  - Automatically applied during execution
