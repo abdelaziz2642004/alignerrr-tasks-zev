@@ -1,46 +1,33 @@
-The implementation is complete. Here's a summary of the changes:
+ Both cases work correctly. The implementation:
 
-  Summary: Workflow Variables Support
+  1. In a git repo: Shows branch name and status summary (staged, modified, untracked counts)
+  2. Outside a git repo: Shows "Git repo: No"
 
-  New File Created:
+● The enhancement is complete. Here's a summary of the changes made to src/zev/utils.py:
 
-  - src/zev/workflow_variables.py: Variable extraction and substitution utilities
-    - VARIABLE_PATTERN: Regex to match {{variable_name}} or {{variable_name:description}}
-    - extract_variables_from_workflow(): Extract all unique variables from a workflow
-    - substitute_variables(): Replace variable placeholders with actual values
-    - prompt_for_variables(): Interactive prompt for variable values (with existing values as defaults)
-    - has_variables(): Check if a workflow contains any variables
-    - display_variables_summary(): Show current variable values
+  Added:
+  - subprocess import for running git commands
+  - _run_git_command() - Helper function to safely run git commands with timeout handling
+  - _get_git_context() - Detects if in a git repo and returns branch name and status summary (staged, modified, untracked file counts)
+  - _get_directory_context() - Returns current working directory path, file/directory counts, and a list of notable items
 
-  Modified Files:
+  Modified:
+  - get_env_context() - Now combines OS, shell, directory context, and git context into a comprehensive environment context string
 
-  1. src/zev/llms/types.py:
-    - Added variables: dict[str, str] field to WorkflowState model
-  2. src/zev/constants.py:
-    - Updated LLM prompt to include variable syntax documentation and examples
-    - Shows how to use {{variable_name}} and {{variable_name:description}}
-  3. src/zev/command_selector.py:
-    - handle_workflow(): Checks for variables and prompts user before execution
-    - run_workflow_all(): Accepts variables, stores in state, substitutes in commands
-    - run_workflow_interactive(): Same variable support as run_all
-    - copy_workflow_commands(): Substitutes variables before copying
-    - resume_workflow(): Displays saved variables, allows editing before resuming
+  Example output in a git repo:
+  OS: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35
+  SHELL: /bin/bash
+  Current directory: /home/abdelaziz/.cache/claude-hfi/-home-abdelaziz-alignerr-zev/A
+  Contents: 9 files, 2 directories
+  Notable items: LICENSE, requirements.txt, pyproject.toml, README.md, src, CONTRIBUTING.md
+  Git repo: Yes
+  Branch: hfi/36fdc42d-cfde-40da-aeeb-ccb6ebc6187d/A
+  Status: 1 staged, 25 modified, 2 untracked
 
-  Usage Example:
-
-  When a workflow contains variables like:
-  git checkout -b {{branch_name:Name for new branch}}
-  git commit -m '{{commit_message}}'
-
-  The user will see:
-  This workflow requires the following variables:
-
-  ? Branch Name (Name for new branch): feature/my-feature
-  ? Commit Message: Add new feature
-
-  Variables:
-    branch_name = feature/my-feature
-    commit_message = Add new feature
-
-  When resuming an interrupted workflow, the saved variable values are preserved and the user can choose to
-  "Edit variables before resuming" if needed.
+  Example output outside a git repo:
+  OS: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35
+  SHELL: /bin/bash
+  Current directory: /tmp
+  Contents: 6 files, 7 directories
+  Notable items: snap-private-tmp, remote-wsl-loc.txt, tmux-1000
+  Git repo: No

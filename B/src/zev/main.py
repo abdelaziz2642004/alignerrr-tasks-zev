@@ -6,13 +6,12 @@ from rich import print as rprint
 from rich.console import Console
 
 from zev.command_history import CommandHistory
-from zev.command_selector import resume_workflow, show_options
+from zev.command_selector import show_options
 from zev.config import config
 from zev.config.setup import run_setup
 from zev.constants import CONFIG_FILE_NAME
 from zev.llms.llm import get_inference_provider
 from zev.utils import get_env_context, get_input_string, show_help
-from zev.workflow_state import show_incomplete_workflows, workflow_state_manager
 
 command_history = CommandHistory()
 
@@ -39,11 +38,11 @@ def get_options(words: str):
         print(response.explanation_if_not_valid)
         return
 
-    if not response.commands and not response.workflows:
+    if not response.commands:
         print("No commands available")
         return
 
-    show_options(response.commands, response.workflows, original_query=words)
+    show_options(response.commands)
 
 
 def run_no_prompt():
@@ -81,18 +80,7 @@ def handle_special_case(args):
         show_help()
         return True
 
-    if command == "--resume":
-        handle_resume_workflows()
-        return True
-
     return False
-
-
-def handle_resume_workflows():
-    """Handle the --resume flag to show and resume incomplete workflows."""
-    selected = show_incomplete_workflows()
-    if selected:
-        resume_workflow(selected)
 
 
 def app():

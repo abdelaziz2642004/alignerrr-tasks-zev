@@ -93,10 +93,9 @@ class CommandHistory:
             return
 
         commands = selected_entry.response.commands
-        workflows = selected_entry.response.workflows
 
-        if not commands and not workflows:
+        if not commands:
             print("No commands available")
             return None
 
-        show_options(commands, workflows, original_query=selected_entry.query)
+        show_options(commands)
