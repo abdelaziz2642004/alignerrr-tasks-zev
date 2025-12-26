@@ -42,7 +42,7 @@ def get_options(words: str):
         print("No commands available")
         return
 
-    show_options(response.commands, on_feedback=command_history.save_feedback)
+    show_options(response.commands, query=words, feedback_callback=command_history._feedback_callback)
 
 
 def run_no_prompt():
@@ -76,11 +76,87 @@ def handle_special_case(args):
         command_history.show_history()
         return True
 
+    if command == "--feedback" or command == "-f":
+        handle_feedback()
+        return True
+
     if command == "--help" or command == "-h":
         show_help()
         return True
 
     return False
+
+
+def check_pending_feedback() -> bool:
+    """Check for pending feedback from a previous command and prompt if exists.
+
+    Returns True if feedback was collected, False otherwise.
+    """
+    import json
+
+    pending_file = Path.home() / ".zev_pending_feedback"
+
+    if not pending_file.exists():
+        return False
+
+    try:
+        with open(pending_file, "r") as f:
+            pending = json.load(f)
+
+        rprint(f"\n[cyan]Previous command:[/cyan] {pending['command']}")
+        rprint(f"[dim]Query: {pending['query']}[/dim]\n")
+
+        from zev.command_selector import prompt_for_feedback
+        prompt_for_feedback(
+            pending["command"],
+            pending["query"],
+            command_history._feedback_callback
+        )
+
+        # Remove pending file after feedback
+        pending_file.unlink()
+        print("")  # Add spacing before continuing
+        return True
+    except (json.JSONDecodeError, KeyError):
+        pending_file.unlink()
+        return False
+
+
+def handle_feedback():
+    """Handle the --feedback flag to view feedback stats."""
+    show_feedback_stats()
+
+
+def show_feedback_stats():
+    """Display feedback statistics."""
+    stats = command_history.get_feedback_stats()
+
+    rprint("\n[bold]Command Feedback Statistics[/bold]")
+    rprint("─" * 30)
+
+    if stats["total"] == 0:
+        rprint("[dim]No feedback recorded yet.[/dim]")
+        rprint("[dim]Feedback is collected automatically when you run zev after using a command.[/dim]")
+        return
+
+    success_pct = (stats["success"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+    failed_pct = (stats["failed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+
+    rprint(f"Total feedback entries: {stats['total']}")
+    rprint(f"[green]✓ Successful:[/green] {stats['success']} ({success_pct:.1f}%)")
+    rprint(f"[red]✗ Failed:[/red] {stats['failed']} ({failed_pct:.1f}%)")
+    rprint(f"[dim]○ Skipped:[/dim] {stats['skipped']}")
+
+    # Show recent feedback entries
+    feedback_entries = command_history.get_feedback()
+    if feedback_entries:
+        rprint("\n[bold]Recent Feedback:[/bold]")
+        for entry in reversed(feedback_entries[-5:]):
+            status_icon = "[green]✓[/green]" if entry.feedback.value == "success" else "[red]✗[/red]" if entry.feedback.value == "failed" else "[dim]○[/dim]"
+            cmd_display = entry.command[:50] + ('...' if len(entry.command) > 50 else '')
+            rprint(f"  {status_icon} {cmd_display}")
+            if entry.failure_notes:
+                rprint(f"      [dim]Note: {entry.failure_notes}[/dim]")
 
 
 def app():
@@ -98,6 +174,9 @@ def app():
         return
 
     dotenv.load_dotenv(config_path, override=True)
+
+    # Check for pending feedback from previous command
+    check_pending_feedback()
 
     if not args:
         run_no_prompt()

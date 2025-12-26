@@ -1,3 +1,5 @@
+from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -5,8 +7,22 @@ import questionary
 from pydantic import BaseModel
 
 from zev.command_selector import show_options
-from zev.constants import HISTORY_FILE_NAME
-from zev.llms.types import Command, CommandFeedback, OptionsResponse
+from zev.constants import FEEDBACK_FILE_NAME, HISTORY_FILE_NAME
+from zev.llms.types import OptionsResponse
+
+
+class FeedbackStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class CommandFeedback(BaseModel):
+    command: str
+    query: str
+    feedback: FeedbackStatus
+    timestamp: str
+    failure_notes: Optional[str] = None
 
 
 class CommandHistoryEntry(BaseModel):
@@ -17,33 +33,59 @@ class CommandHistoryEntry(BaseModel):
 class CommandHistory:
     def __init__(self) -> None:
         self.path = Path.home() / HISTORY_FILE_NAME
+        self.feedback_path = Path.home() / FEEDBACK_FILE_NAME
         self.max_entries = 100
         self.path.touch(exist_ok=True)
+        self.feedback_path.touch(exist_ok=True)
         self.encoding = "utf-8"
 
     def save_options(self, query: str, options: OptionsResponse) -> None:
         entry = CommandHistoryEntry(query=query, response=options)
         self._write_to_history_file(entry)
 
-    def save_feedback(self, command: Command, feedback: CommandFeedback) -> None:
-        """Update the feedback for a specific command in history."""
-        history = self.get_history()
-        if not history:
-            return
+    def save_feedback(self, command: str, query: str, feedback: FeedbackStatus, failure_notes: Optional[str] = None) -> None:
+        entry = CommandFeedback(
+            command=command,
+            query=query,
+            feedback=feedback,
+            timestamp=datetime.now().isoformat(),
+            failure_notes=failure_notes,
+        )
+        self._write_to_feedback_file(entry)
 
-        # Find and update the command in history (search from most recent)
-        updated = False
-        for entry in reversed(history):
-            for cmd in entry.response.commands:
-                if cmd.command == command.command and cmd.feedback is None:
-                    cmd.feedback = feedback
-                    updated = True
-                    break
-            if updated:
-                break
+    def _write_to_feedback_file(self, entry: CommandFeedback) -> None:
+        with open(self.feedback_path, "a", encoding=self.encoding) as f:
+            f.write(entry.model_dump_json() + "\n")
 
-        if updated:
-            self._rewrite_history(history)
+        # Trim feedback file if needed
+        with open(self.feedback_path, "r", encoding=self.encoding) as f:
+            lines = f.readlines()
+            if len(lines) > self.max_entries:
+                with open(self.feedback_path, "w", encoding=self.encoding) as f:
+                    f.writelines(lines[-self.max_entries:])
+
+    def get_feedback(self) -> list[CommandFeedback]:
+        with open(self.feedback_path, "r", encoding=self.encoding) as f:
+            entries = [CommandFeedback.model_validate_json(line) for line in f if line.strip()]
+        return entries if entries else []
+
+    def get_feedback_stats(self) -> dict:
+        feedback_entries = self.get_feedback()
+        if not feedback_entries:
+            return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+
+        stats = {
+            "total": len(feedback_entries),
+            "success": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SUCCESS),
+            "failed": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.FAILED),
+            "skipped": sum(1 for e in feedback_entries if e.feedback == FeedbackStatus.SKIPPED),
+        }
+        return stats
+
+    def get_command_feedback_history(self, command: str) -> list[CommandFeedback]:
+        """Get all feedback entries for a specific command."""
+        feedback_entries = self.get_feedback()
+        return [e for e in feedback_entries if e.command == command]
 
     def get_history(self) -> list[CommandHistoryEntry]:
         with open(self.path, "r", encoding=self.encoding) as f:
@@ -64,12 +106,6 @@ class CommandHistory:
             if len(lines) > self.max_entries:
                 with open(self.path, "w", encoding=self.encoding) as f:
                     f.writelines(lines[-self.max_entries :])
-
-    def _rewrite_history(self, history: list[CommandHistoryEntry]) -> None:
-        """Rewrite the entire history file with updated entries."""
-        with open(self.path, "w", encoding=self.encoding) as f:
-            for entry in history:
-                f.write(entry.model_dump_json() + "\n")
 
     def display_history_options(self, reverse_history_entries, show_limit=5) -> Optional[CommandHistoryEntry]:
         if not reverse_history_entries:
@@ -124,4 +160,8 @@ class CommandHistory:
             print("No commands available")
             return None
 
-        show_options(commands, on_feedback=self.save_feedback)
+        show_options(commands, query=selected_entry.query, feedback_callback=self._feedback_callback)
+
+    def _feedback_callback(self, command: str, query: str, feedback_status: str, failure_notes: Optional[str] = None) -> None:
+        """Callback to save feedback from command_selector."""
+        self.save_feedback(command, query, FeedbackStatus(feedback_status), failure_notes)

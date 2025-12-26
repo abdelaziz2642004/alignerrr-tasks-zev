@@ -1,49 +1,38 @@
-I have successfully implemented the feedback mechanism. Here's a summary of the changes made:
+The implementation is complete. Here's a summary of the updated changes:
 
-  Summary of Changes
+  Updated Implementation Summary
 
-  1. src/zev/constants.py
+  Key Changes
 
-  - Added FEEDBACK_FILE_NAME = ".zevfeedback" constant for storing feedback data
+  1. Automatic Feedback Collection: Feedback is now collected automatically the next time the user runs zev, rather than
+   requiring a separate --feedback flag.
+  2. Enhanced Feedback Schema (CommandFeedback in command_history.py):
+    - command: The command that was copied
+    - query: The original user query
+    - feedback: Status (success/failed/skipped)
+    - timestamp: ISO timestamp when feedback was given
+    - notes: Optional user notes (prompted when command failed)
+  3. New PendingFeedback Model: Tracks commands awaiting feedback:
+    - command: The copied command
+    - query: The original query
+    - copied_at: Timestamp when command was copied
 
-  2. src/zev/command_history.py
+  Flow
 
-  - Added FeedbackStatus enum with values: SUCCESS, FAILED, SKIPPED
-  - Added CommandFeedback model to store feedback entries with: command, query, feedback status, and timestamp
-  - Added feedback storage methods to CommandHistory class:
-    - save_feedback() - saves feedback to the feedback file
-    - _write_to_feedback_file() - writes feedback entries to disk
-    - get_feedback() - retrieves all feedback entries
-    - get_feedback_stats() - returns statistics (total, success, failed, skipped counts)
-    - get_command_feedback_history() - gets feedback for a specific command
-    - _feedback_callback() - callback function for use by command_selector
+  1. User runs zev and selects a command → Command is copied to clipboard and stored as "pending feedback" in
+  ~/.zev_pending_feedback
+  2. User runs zev again → Before showing any prompts, zev checks for pending feedback:
+    - Shows the previous command and query
+    - Asks "Did the command work?" (Yes/No/Skip)
+    - If "No", prompts for optional notes about what went wrong
+    - Saves feedback to ~/.zevfeedback with timestamp and notes
+    - Clears the pending feedback file
+  3. zev --feedback → Now shows feedback statistics only (no longer needed for providing feedback)
 
-  3. src/zev/command_selector.py
+  Files Modified
 
-  - Modified show_options() to accept optional query and feedback_callback parameters
-  - Modified handle_selected_option() to:
-    - Show a tip about using zev --feedback after copying to clipboard
-    - Store pending feedback info for later retrieval
-    - Prompt for immediate feedback when running commands directly (fallback mode)
-  - Added _store_pending_feedback() - stores pending feedback info to ~/.zev_pending_feedback
-  - Added prompt_for_feedback() - displays interactive feedback prompt with options: "Yes, it worked!", "No, it failed", "Skip feedback"
-
-  4. src/zev/main.py
-
-  - Added --feedback / -f flag to handle_special_case()
-  - Added handle_feedback() - handles the feedback flow (checks for pending feedback or shows stats)
-  - Added show_feedback_stats() - displays feedback statistics with visual formatting
-  - Updated get_options() to pass query and feedback callback to show_options()
-
-  5. src/zev/utils.py
-
-  - Updated help text to include the new --feedback, -f option
-
-  How It Works
-
-  1. After selecting a command: When a user selects a command and it's copied to clipboard, they see a tip: "Tip: After running the command, use 'zev --feedback' to report if it worked"
-  2. Providing feedback: Users can run zev --feedback or zev -f to:
-    - If there's a pending command, they're prompted to report if it worked (Success/Failed/Skip)
-    - If no pending command, they see feedback statistics
-  3. Feedback storage: Feedback is stored in ~/.zevfeedback as JSON lines with command, query, status, and timestamp
-  4. Statistics: The --feedback flag shows overall stats including success/failure rates and recent feedback entries
+  - src/zev/constants.py - Added FEEDBACK_FILE_NAME
+  - src/zev/command_history.py - Added feedback models and methods
+  - src/zev/command_selector.py - Updated to save pending feedback and prompt with notes
+  - src/zev/main.py - Added check_pending_feedback() call at startup
+  - src/zev/utils.py - Updated help text

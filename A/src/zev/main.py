@@ -6,7 +6,7 @@ from rich import print as rprint
 from rich.console import Console
 
 from zev.command_history import CommandHistory
-from zev.command_selector import show_options
+from zev.command_selector import prompt_for_feedback, show_options
 from zev.config import config
 from zev.config.setup import run_setup
 from zev.constants import CONFIG_FILE_NAME
@@ -18,6 +18,20 @@ command_history = CommandHistory()
 
 def setup():
     run_setup()
+
+
+def check_pending_feedback() -> bool:
+    """Check for and handle pending feedback from previous command. Returns True if feedback was collected."""
+    pending = command_history.get_pending_feedback()
+    if pending:
+        prompt_for_feedback(
+            pending.command,
+            pending.query,
+            command_history._feedback_callback
+        )
+        command_history.clear_pending_feedback()
+        return True
+    return False
 
 
 def get_options(words: str):
@@ -42,7 +56,7 @@ def get_options(words: str):
         print("No commands available")
         return
 
-    show_options(response.commands, query=words, feedback_callback=command_history._feedback_callback)
+    show_options(response.commands, query=words, save_pending_callback=command_history.save_pending_feedback)
 
 
 def run_no_prompt():
@@ -77,7 +91,7 @@ def handle_special_case(args):
         return True
 
     if command == "--feedback" or command == "-f":
-        handle_feedback()
+        show_feedback_stats()
         return True
 
     if command == "--help" or command == "-h":
@@ -85,38 +99,6 @@ def handle_special_case(args):
         return True
 
     return False
-
-
-def handle_feedback():
-    """Handle the --feedback flag to provide feedback on the last command or view stats."""
-    from pathlib import Path
-    from zev.command_selector import prompt_for_feedback
-    import json
-
-    pending_file = Path.home() / ".zev_pending_feedback"
-
-    # Check if there's a pending feedback
-    if pending_file.exists():
-        try:
-            with open(pending_file, "r") as f:
-                pending = json.load(f)
-
-            rprint(f"\n[cyan]Last command:[/cyan] {pending['command']}")
-            rprint(f"[dim]Query: {pending['query']}[/dim]\n")
-
-            prompt_for_feedback(
-                pending["command"],
-                pending["query"],
-                command_history._feedback_callback
-            )
-
-            # Remove pending file after feedback
-            pending_file.unlink()
-        except (json.JSONDecodeError, KeyError):
-            pending_file.unlink()
-            show_feedback_stats()
-    else:
-        show_feedback_stats()
 
 
 def show_feedback_stats():
@@ -128,7 +110,7 @@ def show_feedback_stats():
 
     if stats["total"] == 0:
         rprint("[dim]No feedback recorded yet.[/dim]")
-        rprint("[dim]After running a command, use 'zev --feedback' to report if it worked.[/dim]")
+        rprint("[dim]Feedback is collected automatically when you run zev after using a command.[/dim]")
         return
 
     success_pct = (stats["success"] / stats["total"]) * 100 if stats["total"] > 0 else 0
@@ -145,7 +127,10 @@ def show_feedback_stats():
         rprint("\n[bold]Recent Feedback:[/bold]")
         for entry in reversed(feedback_entries[-5:]):
             status_icon = "[green]✓[/green]" if entry.feedback.value == "success" else "[red]✗[/red]" if entry.feedback.value == "failed" else "[dim]○[/dim]"
-            rprint(f"  {status_icon} {entry.command[:50]}{'...' if len(entry.command) > 50 else ''}")
+            cmd_display = entry.command[:50] + ('...' if len(entry.command) > 50 else '')
+            rprint(f"  {status_icon} {cmd_display}")
+            if entry.notes:
+                rprint(f"      [dim]Note: {entry.notes[:60]}{'...' if len(entry.notes) > 60 else ''}[/dim]")
 
 
 def app():
@@ -163,6 +148,9 @@ def app():
         return
 
     dotenv.load_dotenv(config_path, override=True)
+
+    # Check for pending feedback from previous command before proceeding
+    check_pending_feedback()
 
     if not args:
         run_no_prompt()

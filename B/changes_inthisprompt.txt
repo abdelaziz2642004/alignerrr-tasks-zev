@@ -1,41 +1,38 @@
-The implementation is complete. Here's a summary of the changes:
+The implementation is complete. Here's a summary of the updated changes:
 
   Summary of Changes
 
-  1. src/zev/llms/types.py
+  Key Behavioral Change
 
-  - Added CommandFeedback enum with values: SUCCESS, FAILED, SKIPPED
-  - Added optional feedback field to the Command model
+  - Automatic feedback collection: Instead of requiring users to run zev --feedback, feedback is now collected
+  automatically at the start of the next zev run when there's a pending command.
 
-  2. src/zev/command_selector.py
+  Updated Files
 
-  - Updated show_options() to accept an optional on_feedback callback
-  - Updated handle_selected_option() to prompt for feedback after copying to clipboard
-  - Added prompt_for_feedback() function that displays an interactive menu asking users if the command worked:
-    - "Skip feedback" (default)
-    - "Command worked"
-    - "Command failed"
+  src/zev/command_history.py
+  - Enhanced CommandFeedback model with failure_notes: Optional[str] field
+  - Updated save_feedback() to accept optional failure_notes parameter
+  - Updated _feedback_callback() to pass failure notes to storage
 
-  3. src/zev/command_history.py
+  src/zev/command_selector.py
+  - Removed the tip message about --feedback (since it's now automatic)
+  - Updated _store_pending_feedback() to remove unused callback parameter
+  - Updated prompt_for_feedback() to ask for optional failure notes when a command fails
 
-  - Added save_feedback() method that finds the command in history and updates its feedback status
-  - Added _rewrite_history() helper method to persist feedback updates
-  - Updated show_history() to pass the feedback callback when re-running historical commands
+  src/zev/main.py
+  - Added check_pending_feedback() function that checks for pending feedback and prompts automatically
+  - Simplified handle_feedback() to just show stats (since feedback is collected automatically)
+  - Updated app() to call check_pending_feedback() before processing new queries
+  - Updated show_feedback_stats() to display failure notes in recent feedback list
 
-  4. src/zev/main.py
+  src/zev/utils.py
+  - Updated help text to explain automatic feedback collection
 
-  - Updated get_options() to pass command_history.save_feedback as the feedback callback
+  User Flow
 
-  How It Works
-
-  1. User runs zev "list files" and selects a command
-  2. Command is copied to clipboard
-  3. User is prompted: "How did the command work? (optional)"
-  4. User can select:
-    - Skip feedback - no feedback recorded
-    - Command worked - feedback stored as success
-    - Command failed - feedback stored as failed
-  5. Feedback is persisted in ~/.zevhistory alongside the command
-
-  The feedback is stored in the history file as part of the command's JSON data, allowing future analysis of which
-  commands work well and which don't.
+  1. User runs zev "find large files" and selects a command → command copied to clipboard, pending feedback stored
+  2. User runs the command in their terminal
+  3. User runs zev again (for any query) → automatically prompted: "Did the command work?"
+  4. If "No, it failed" → prompted for optional notes: "What went wrong?"
+  5. Feedback stored with command, query, status, timestamp, and optional failure notes
+  6. User can view stats anytime with zev --feedback
