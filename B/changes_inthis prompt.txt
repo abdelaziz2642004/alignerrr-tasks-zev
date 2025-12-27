@@ -1,30 +1,11 @@
-Both cases work correctly. The enhanced get_env_context() function now provides:
+● The fix is working. The changes I made:
 
-  Summary of changes to src/zev/utils.py:
+  1. Improved git status parsing - Now uses a clearer loop-based approach with explicit handling for each status type:
+    - Properly handles all staged states: M (modified), A (added), D (deleted), R (renamed), C (copied)
+    - Properly handles unstaged states: M (modified), D (deleted) - note that A, R, C don't apply to worktree
+    - Handles U (unmerged) states for merge conflicts
+    - Handles ?? (untracked) and skips !! (ignored) files
+    - Added conflict detection for merge conflict states (UU, AA, DD, or any state with U)
+  2. Detached HEAD handling - This was already implemented correctly (lines 74-83), showing detached at <commit-hash> when not on a branch.
 
-  1. Added subprocess import - needed for running git commands
-  2. New _get_git_info() helper function that:
-    - Checks if the current directory is inside a git repository
-    - Gets the current branch name (handles detached HEAD state)
-    - Gets a status summary showing counts of staged, modified, and untracked files
-  3. Enhanced get_env_context() function now returns:
-    - OS: - Operating system information (unchanged)
-    - SHELL: - Shell path (unchanged)
-    - CWD: - Current working directory path (new)
-    - GIT_REPO: - Whether it's a git repository (yes/no) (new)
-    - GIT_BRANCH: - Current branch name (new, only if in git repo)
-    - GIT_STATUS: - Summary like "3 staged, 2 modified, 5 untracked" or "clean" (new, only if in git repo)
-
-  Example output in a git repo:
-  OS: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35
-  SHELL: /bin/bash
-  CWD: /home/user/project
-  GIT_REPO: yes
-  GIT_BRANCH: main
-  GIT_STATUS: 1 staged, 25 modified, 2 untracked
-
-  Example output outside a git repo:
-  OS: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35
-  SHELL: /bin/bash
-  CWD: /tmp
-  GIT_REPO: no
+  The output now includes a conflicts count when there are merge conflicts, making the status summary more comprehensive.

@@ -94,9 +94,36 @@ def _get_git_info() -> dict:
             if not status_lines or status_lines == [""]:
                 git_info["status_summary"] = "clean"
             else:
-                staged = sum(1 for line in status_lines if line and line[0] in "MADRCU")
-                unstaged = sum(1 for line in status_lines if line and len(line) > 1 and line[1] in "MADRCU")
-                untracked = sum(1 for line in status_lines if line and line.startswith("??"))
+                # Git porcelain format: XY where X=staged, Y=unstaged
+                # X can be: M (modified), A (added), D (deleted), R (renamed), C (copied), U (unmerged)
+                # Y can be: M (modified), D (deleted), U (unmerged)
+                # Special cases: ?? (untracked), !! (ignored), UU/AA/DD/etc (conflicts)
+                staged = 0
+                unstaged = 0
+                untracked = 0
+                conflicts = 0
+
+                for line in status_lines:
+                    if not line or len(line) < 2:
+                        continue
+                    x, y = line[0], line[1]
+
+                    # Untracked files
+                    if x == "?" and y == "?":
+                        untracked += 1
+                    # Ignored files (skip)
+                    elif x == "!" and y == "!":
+                        continue
+                    # Unmerged/conflict states
+                    elif x == "U" or y == "U" or (x == y and x in "AD"):
+                        conflicts += 1
+                    else:
+                        # Staged changes (index column)
+                        if x in "MADRC":
+                            staged += 1
+                        # Unstaged changes (worktree column)
+                        if y in "MD":
+                            unstaged += 1
 
                 parts = []
                 if staged:
@@ -105,6 +132,8 @@ def _get_git_info() -> dict:
                     parts.append(f"{unstaged} modified")
                 if untracked:
                     parts.append(f"{untracked} untracked")
+                if conflicts:
+                    parts.append(f"{conflicts} conflicts")
                 git_info["status_summary"] = ", ".join(parts) if parts else "clean"
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         # git not available or timed out

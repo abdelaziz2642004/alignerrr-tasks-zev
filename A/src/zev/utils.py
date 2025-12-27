@@ -43,102 +43,103 @@ def get_input_string(
         print(f"{field_name} is required, please try again.")
 
 
-def _run_git_command(args: list[str]) -> str | None:
-    """Run a git command and return output, or None if it fails."""
+def _get_git_info() -> dict:
+    """Get git repository information if in a git repo."""
+    git_info = {"is_git_repo": False, "branch": None, "status_summary": None}
+
     try:
+        # Check if we're in a git repository
         result = subprocess.run(
-            ["git"] + args,
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return git_info
+
+        git_info["is_git_repo"] = True
+
+        # Get current branch
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
-        return None
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
+            branch = result.stdout.strip()
+            if branch:
+                git_info["branch"] = branch
+            else:
+                # Detached HEAD state - get short commit hash
+                result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    git_info["branch"] = f"detached at {result.stdout.strip()}"
 
+        # Get status summary
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            status_lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            if not status_lines or status_lines == [""]:
+                git_info["status_summary"] = "clean"
+            else:
+                staged = sum(1 for line in status_lines if line and line[0] in "MADRCU")
+                unstaged = sum(1 for line in status_lines if line and len(line) > 1 and line[1] in "MADRCU")
+                untracked = sum(1 for line in status_lines if line and line.startswith("??"))
 
-def _get_git_context() -> str | None:
-    """Get git repository context if in a git repo."""
-    # Check if we're in a git repo
-    if _run_git_command(["rev-parse", "--is-inside-work-tree"]) != "true":
-        return None
+                parts = []
+                if staged:
+                    parts.append(f"{staged} staged")
+                if unstaged:
+                    parts.append(f"{unstaged} modified")
+                if untracked:
+                    parts.append(f"{untracked} untracked")
+                git_info["status_summary"] = ", ".join(parts) if parts else "clean"
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        # git not available or timed out
+        pass
 
-    context_parts = ["Git repo: Yes"]
-
-    # Get current branch
-    branch = _run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
-    if branch:
-        context_parts.append(f"Branch: {branch}")
-
-    # Get status summary
-    status_output = _run_git_command(["status", "--porcelain"])
-    if status_output is not None:
-        if status_output == "":
-            context_parts.append("Status: Clean")
-        else:
-            # Count different types of changes
-            lines = status_output.split("\n")
-            staged = sum(1 for line in lines if line and line[0] in "MADRC")
-            unstaged = sum(1 for line in lines if line and len(line) > 1 and line[1] in "MD")
-            untracked = sum(1 for line in lines if line.startswith("??"))
-
-            status_parts = []
-            if staged:
-                status_parts.append(f"{staged} staged")
-            if unstaged:
-                status_parts.append(f"{unstaged} modified")
-            if untracked:
-                status_parts.append(f"{untracked} untracked")
-
-            if status_parts:
-                context_parts.append(f"Status: {', '.join(status_parts)}")
-
-    return "\n".join(context_parts)
-
-
-def _get_directory_context() -> str:
-    """Get current directory and its contents summary."""
-    cwd = os.getcwd()
-    context_parts = [f"Current directory: {cwd}"]
-
-    try:
-        entries = os.listdir(cwd)
-        files = [e for e in entries if os.path.isfile(os.path.join(cwd, e))]
-        dirs = [e for e in entries if os.path.isdir(os.path.join(cwd, e))]
-
-        # Show counts
-        context_parts.append(f"Contents: {len(files)} files, {len(dirs)} directories")
-
-        # List some key files/dirs (limit to avoid overwhelming context)
-        visible_entries = [e for e in entries if not e.startswith(".")][:15]
-        if visible_entries:
-            context_parts.append(f"Notable items: {', '.join(visible_entries)}")
-    except OSError:
-        pass  # Can't read directory, skip contents
-
-    return "\n".join(context_parts)
+    return git_info
 
 
 def get_env_context() -> str:
     """Gather environment context including OS, shell, directory, and git info."""
-    os_name = platform.platform(aliased=True)
-    shell = os.environ.get("SHELL") or os.environ.get("COMSPEC")
+    context_parts = []
 
-    context_parts = [f"OS: {os_name}"]
+    # OS information
+    os_name = platform.platform(aliased=True)
+    context_parts.append(f"OS: {os_name}")
+
+    # Shell information
+    shell = os.environ.get("SHELL") or os.environ.get("COMSPEC")
     if shell:
         context_parts.append(f"SHELL: {shell}")
 
-    # Add directory context
-    context_parts.append(_get_directory_context())
+    # Current directory
+    cwd = os.getcwd()
+    context_parts.append(f"CWD: {cwd}")
 
-    # Add git context if in a repo
-    git_context = _get_git_context()
-    if git_context:
-        context_parts.append(git_context)
+    # Git information
+    git_info = _get_git_info()
+    if git_info["is_git_repo"]:
+        context_parts.append("GIT_REPO: yes")
+        if git_info["branch"]:
+            context_parts.append(f"GIT_BRANCH: {git_info['branch']}")
+        if git_info["status_summary"]:
+            context_parts.append(f"GIT_STATUS: {git_info['status_summary']}")
     else:
-        context_parts.append("Git repo: No")
+        context_parts.append("GIT_REPO: no")
 
     return "\n".join(context_parts)
 
