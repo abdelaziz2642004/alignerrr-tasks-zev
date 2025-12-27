@@ -1,12 +1,15 @@
 import os
 import platform
 import subprocess
+import threading
 import time
 
 import questionary
 
-# Cache for get_env_context()
+# Cache for get_env_context() with thread-safe access
+# The lock ensures atomic read-modify-write operations on the cache
 _env_context_cache = {"value": None, "timestamp": 0, "cwd": None}
+_env_context_cache_lock = threading.Lock()
 _ENV_CONTEXT_CACHE_TTL = 2  # seconds
 
 CLI_STYLE = questionary.Style(
@@ -142,58 +145,100 @@ def _get_git_info() -> dict:
     return git_info
 
 
+def clear_env_context_cache() -> None:
+    """Clear the environment context cache.
+
+    This function is primarily useful for testing purposes, allowing tests to
+    force fresh context retrieval without waiting for the cache TTL to expire.
+
+    Thread-safe: Uses a lock to ensure atomic cache clearing.
+    """
+    global _env_context_cache
+    with _env_context_cache_lock:
+        _env_context_cache["value"] = None
+        _env_context_cache["timestamp"] = 0
+        _env_context_cache["cwd"] = None
+
+
 def get_env_context() -> str:
     """Gather environment context including OS, shell, directory, and git info.
 
     Results are cached for 2 seconds to avoid redundant git commands when
     called multiple times in quick succession.
+
+    Thread-safe: Uses a lock to prevent race conditions when multiple threads
+    access or update the cache simultaneously. The implementation uses a
+    double-check pattern to minimize lock contention for cache hits.
+
+    Returns:
+        A newline-separated string containing environment context information:
+        - OS: Operating system platform info
+        - SHELL: Current shell path
+        - CWD: Current working directory
+        - GIT_REPO: Whether current directory is in a git repository (yes/no)
+        - GIT_BRANCH: Current branch name (if in git repo)
+        - GIT_STATUS: Summary of git status (if in git repo)
     """
     global _env_context_cache
 
     current_time = time.time()
     cwd = os.getcwd()
 
-    # Return cached result if still valid and in same directory
+    # First check without lock for performance (cache hit fast path)
+    # This is safe because we only read values and the worst case is
+    # a false negative which leads to cache regeneration
+    cache = _env_context_cache
     if (
-        _env_context_cache["value"] is not None
-        and _env_context_cache["cwd"] == cwd
-        and (current_time - _env_context_cache["timestamp"]) < _ENV_CONTEXT_CACHE_TTL
+        cache["value"] is not None
+        and cache["cwd"] == cwd
+        and (current_time - cache["timestamp"]) < _ENV_CONTEXT_CACHE_TTL
     ):
-        return _env_context_cache["value"]
+        return cache["value"]
 
-    context_parts = []
+    # Cache miss or potentially stale - acquire lock for update
+    with _env_context_cache_lock:
+        # Double-check after acquiring lock (another thread may have updated)
+        if (
+            _env_context_cache["value"] is not None
+            and _env_context_cache["cwd"] == cwd
+            and (time.time() - _env_context_cache["timestamp"]) < _ENV_CONTEXT_CACHE_TTL
+        ):
+            return _env_context_cache["value"]
 
-    # OS information
-    os_name = platform.platform(aliased=True)
-    context_parts.append(f"OS: {os_name}")
+        # Build context (lock held to prevent duplicate work)
+        context_parts = []
 
-    # Shell information
-    shell = os.environ.get("SHELL") or os.environ.get("COMSPEC")
-    if shell:
-        context_parts.append(f"SHELL: {shell}")
+        # OS information
+        os_name = platform.platform(aliased=True)
+        context_parts.append(f"OS: {os_name}")
 
-    # Current directory
-    context_parts.append(f"CWD: {cwd}")
+        # Shell information
+        shell = os.environ.get("SHELL") or os.environ.get("COMSPEC")
+        if shell:
+            context_parts.append(f"SHELL: {shell}")
 
-    # Git information
-    git_info = _get_git_info()
-    if git_info["is_git_repo"]:
-        context_parts.append("GIT_REPO: yes")
-        if git_info["branch"]:
-            context_parts.append(f"GIT_BRANCH: {git_info['branch']}")
-        if git_info["status_summary"]:
-            context_parts.append(f"GIT_STATUS: {git_info['status_summary']}")
-    else:
-        context_parts.append("GIT_REPO: no")
+        # Current directory
+        context_parts.append(f"CWD: {cwd}")
 
-    result = "\n".join(context_parts)
+        # Git information
+        git_info = _get_git_info()
+        if git_info["is_git_repo"]:
+            context_parts.append("GIT_REPO: yes")
+            if git_info["branch"]:
+                context_parts.append(f"GIT_BRANCH: {git_info['branch']}")
+            if git_info["status_summary"]:
+                context_parts.append(f"GIT_STATUS: {git_info['status_summary']}")
+        else:
+            context_parts.append("GIT_REPO: no")
 
-    # Update cache
-    _env_context_cache["value"] = result
-    _env_context_cache["timestamp"] = current_time
-    _env_context_cache["cwd"] = cwd
+        result = "\n".join(context_parts)
 
-    return result
+        # Update cache
+        _env_context_cache["value"] = result
+        _env_context_cache["timestamp"] = time.time()
+        _env_context_cache["cwd"] = cwd
+
+        return result
 
 
 def show_help():

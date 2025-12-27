@@ -1,13 +1,16 @@
 import os
 import platform
 import subprocess
+import threading
 import time
 
 import questionary
 
-# Cache for environment context (2-second TTL)
+# Cache for get_env_context() with thread-safety
+# The lock ensures atomic read-modify-write operations on the cache
 _env_context_cache = {"value": None, "timestamp": 0, "cwd": None}
-_CACHE_TTL_SECONDS = 2
+_env_context_cache_lock = threading.Lock()
+_ENV_CONTEXT_CACHE_TTL = 2  # seconds
 
 CLI_STYLE = questionary.Style(
     [
@@ -51,16 +54,15 @@ def get_input_string(
 def _get_git_info() -> dict:
     """Get git repository information if in a git repo.
 
-    Optimized to use a single git command for branch and status info.
+    Optimized to use a single git command for all info.
     """
     git_info = {"is_git_repo": False, "branch": None, "status_summary": None}
 
     try:
-        # Single command: get branch info and status in one call
-        # --branch adds branch info as first line: ## branch...tracking
-        # --porcelain gives machine-readable status
+        # Single command to get branch and status info
+        # --porcelain=v1 --branch gives us branch info in first line(s) + status
         result = subprocess.run(
-            ["git", "status", "--porcelain", "--branch"],
+            ["git", "status", "--porcelain=v1", "--branch"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -69,30 +71,30 @@ def _get_git_info() -> dict:
             return git_info
 
         git_info["is_git_repo"] = True
-        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+        lines = result.stdout.split("\n")
 
-        # Parse branch from first line (format: ## branch...tracking or ## HEAD (no branch))
+        # Parse branch info from first line (format: "## branch...tracking")
         if lines and lines[0].startswith("## "):
-            branch_line = lines[0][3:]  # Remove "## " prefix
-            if branch_line.startswith("HEAD (no branch)") or branch_line == "HEAD":
-                # Detached HEAD - get commit hash with separate command (only when needed)
-                head_result = subprocess.run(
+            branch_line = lines[0][3:]  # Remove "## "
+            # Handle detached HEAD: "## HEAD (no branch)" or "## <commit>..."
+            if branch_line.startswith("HEAD (no branch)"):
+                # Get short commit hash with separate command (only in detached state)
+                commit_result = subprocess.run(
                     ["git", "rev-parse", "--short", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
                 )
-                if head_result.returncode == 0:
-                    git_info["branch"] = f"detached at {head_result.stdout.strip()}"
+                if commit_result.returncode == 0:
+                    git_info["branch"] = f"detached at {commit_result.stdout.strip()}"
             else:
                 # Extract branch name (before "..." if tracking info present)
                 branch = branch_line.split("...")[0]
                 git_info["branch"] = branch
-            # Remove branch line from status lines
-            lines = lines[1:]
 
-        # Parse status (remaining lines)
-        if not lines or lines == [""]:
+        # Parse status (skip branch line)
+        status_lines = [l for l in lines[1:] if l]
+        if not status_lines:
             git_info["status_summary"] = "clean"
         else:
             # Git porcelain format: XY where X=staged, Y=unstaged
@@ -104,8 +106,8 @@ def _get_git_info() -> dict:
             untracked = 0
             conflicts = 0
 
-            for line in lines:
-                if not line or len(line) < 2:
+            for line in status_lines:
+                if len(line) < 2:
                     continue
                 x, y = line[0], line[1]
 
@@ -143,25 +145,50 @@ def _get_git_info() -> dict:
     return git_info
 
 
+def clear_env_context_cache() -> None:
+    """Clear the environment context cache.
+
+    This function is primarily useful for testing purposes or when you need
+    to force a fresh context gathering (e.g., after known filesystem changes).
+
+    Thread-safe: uses the same lock as get_env_context().
+    """
+    global _env_context_cache
+    with _env_context_cache_lock:
+        _env_context_cache["value"] = None
+        _env_context_cache["timestamp"] = 0
+        _env_context_cache["cwd"] = None
+
+
 def get_env_context() -> str:
     """Gather environment context including OS, shell, directory, and git info.
 
-    Results are cached for 2 seconds to avoid redundant subprocess calls
-    when called multiple times in quick succession.
+    Results are cached for 2 seconds to avoid redundant git commands when
+    called multiple times in quick succession.
+
+    Thread-safe: Uses a lock to prevent race conditions when multiple threads
+    access or update the cache simultaneously. The lock is held only during
+    cache reads and writes, not during the actual context gathering, to minimize
+    contention in multi-threaded scenarios.
+
+    Returns:
+        str: Multi-line string containing environment context in KEY: value format.
     """
     global _env_context_cache
 
     current_time = time.time()
-    current_cwd = os.getcwd()
+    cwd = os.getcwd()
 
-    # Check if cache is valid (within TTL and same directory)
-    if (
-        _env_context_cache["value"] is not None
-        and current_time - _env_context_cache["timestamp"] < _CACHE_TTL_SECONDS
-        and _env_context_cache["cwd"] == current_cwd
-    ):
-        return _env_context_cache["value"]
+    # Check cache with lock (fast path)
+    with _env_context_cache_lock:
+        if (
+            _env_context_cache["value"] is not None
+            and _env_context_cache["cwd"] == cwd
+            and (current_time - _env_context_cache["timestamp"]) < _ENV_CONTEXT_CACHE_TTL
+        ):
+            return _env_context_cache["value"]
 
+    # Cache miss - gather context (without holding lock to avoid blocking other threads)
     context_parts = []
 
     # OS information
@@ -174,7 +201,7 @@ def get_env_context() -> str:
         context_parts.append(f"SHELL: {shell}")
 
     # Current directory
-    context_parts.append(f"CWD: {current_cwd}")
+    context_parts.append(f"CWD: {cwd}")
 
     # Git information
     git_info = _get_git_info()
@@ -189,10 +216,11 @@ def get_env_context() -> str:
 
     result = "\n".join(context_parts)
 
-    # Update cache
-    _env_context_cache["value"] = result
-    _env_context_cache["timestamp"] = current_time
-    _env_context_cache["cwd"] = current_cwd
+    # Update cache with lock
+    with _env_context_cache_lock:
+        _env_context_cache["value"] = result
+        _env_context_cache["timestamp"] = current_time
+        _env_context_cache["cwd"] = cwd
 
     return result
 
