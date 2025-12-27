@@ -1,8 +1,13 @@
 import os
 import platform
 import subprocess
+import time
 
 import questionary
+
+# Cache for environment context (2-second TTL)
+_env_context_cache = {"value": None, "timestamp": 0, "cwd": None}
+_CACHE_TTL_SECONDS = 2
 
 CLI_STYLE = questionary.Style(
     [
@@ -44,13 +49,18 @@ def get_input_string(
 
 
 def _get_git_info() -> dict:
-    """Get git repository information if in a git repo."""
+    """Get git repository information if in a git repo.
+
+    Optimized to use a single git command for branch and status info.
+    """
     git_info = {"is_git_repo": False, "branch": None, "status_summary": None}
 
     try:
-        # Check if we're in a git repository
+        # Single command: get branch info and status in one call
+        # --branch adds branch info as first line: ## branch...tracking
+        # --porcelain gives machine-readable status
         result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
+            ["git", "status", "--porcelain", "--branch"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -59,82 +69,73 @@ def _get_git_info() -> dict:
             return git_info
 
         git_info["is_git_repo"] = True
+        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
 
-        # Get current branch
-        result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-            if branch:
-                git_info["branch"] = branch
-            else:
-                # Detached HEAD state - get short commit hash
-                result = subprocess.run(
+        # Parse branch from first line (format: ## branch...tracking or ## HEAD (no branch))
+        if lines and lines[0].startswith("## "):
+            branch_line = lines[0][3:]  # Remove "## " prefix
+            if branch_line.startswith("HEAD (no branch)") or branch_line == "HEAD":
+                # Detached HEAD - get commit hash with separate command (only when needed)
+                head_result = subprocess.run(
                     ["git", "rev-parse", "--short", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
                 )
-                if result.returncode == 0:
-                    git_info["branch"] = f"detached at {result.stdout.strip()}"
-
-        # Get status summary
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            status_lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
-            if not status_lines or status_lines == [""]:
-                git_info["status_summary"] = "clean"
+                if head_result.returncode == 0:
+                    git_info["branch"] = f"detached at {head_result.stdout.strip()}"
             else:
-                # Git porcelain format: XY where X=staged, Y=unstaged
-                # X can be: M (modified), A (added), D (deleted), R (renamed), C (copied), U (unmerged)
-                # Y can be: M (modified), D (deleted), U (unmerged)
-                # Special cases: ?? (untracked), !! (ignored), UU/AA/DD/etc (conflicts)
-                staged = 0
-                unstaged = 0
-                untracked = 0
-                conflicts = 0
+                # Extract branch name (before "..." if tracking info present)
+                branch = branch_line.split("...")[0]
+                git_info["branch"] = branch
+            # Remove branch line from status lines
+            lines = lines[1:]
 
-                for line in status_lines:
-                    if not line or len(line) < 2:
-                        continue
-                    x, y = line[0], line[1]
+        # Parse status (remaining lines)
+        if not lines or lines == [""]:
+            git_info["status_summary"] = "clean"
+        else:
+            # Git porcelain format: XY where X=staged, Y=unstaged
+            # X can be: M (modified), A (added), D (deleted), R (renamed), C (copied), U (unmerged)
+            # Y can be: M (modified), D (deleted), U (unmerged)
+            # Special cases: ?? (untracked), !! (ignored), UU/AA/DD/etc (conflicts)
+            staged = 0
+            unstaged = 0
+            untracked = 0
+            conflicts = 0
 
-                    # Untracked files
-                    if x == "?" and y == "?":
-                        untracked += 1
-                    # Ignored files (skip)
-                    elif x == "!" and y == "!":
-                        continue
-                    # Unmerged/conflict states
-                    elif x == "U" or y == "U" or (x == y and x in "AD"):
-                        conflicts += 1
-                    else:
-                        # Staged changes (index column)
-                        if x in "MADRC":
-                            staged += 1
-                        # Unstaged changes (worktree column)
-                        if y in "MD":
-                            unstaged += 1
+            for line in lines:
+                if not line or len(line) < 2:
+                    continue
+                x, y = line[0], line[1]
 
-                parts = []
-                if staged:
-                    parts.append(f"{staged} staged")
-                if unstaged:
-                    parts.append(f"{unstaged} modified")
-                if untracked:
-                    parts.append(f"{untracked} untracked")
-                if conflicts:
-                    parts.append(f"{conflicts} conflicts")
-                git_info["status_summary"] = ", ".join(parts) if parts else "clean"
+                # Untracked files
+                if x == "?" and y == "?":
+                    untracked += 1
+                # Ignored files (skip)
+                elif x == "!" and y == "!":
+                    continue
+                # Unmerged/conflict states
+                elif x == "U" or y == "U" or (x == y and x in "AD"):
+                    conflicts += 1
+                else:
+                    # Staged changes (index column)
+                    if x in "MADRC":
+                        staged += 1
+                    # Unstaged changes (worktree column)
+                    if y in "MD":
+                        unstaged += 1
+
+            parts = []
+            if staged:
+                parts.append(f"{staged} staged")
+            if unstaged:
+                parts.append(f"{unstaged} modified")
+            if untracked:
+                parts.append(f"{untracked} untracked")
+            if conflicts:
+                parts.append(f"{conflicts} conflicts")
+            git_info["status_summary"] = ", ".join(parts) if parts else "clean"
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         # git not available or timed out
         pass
@@ -143,7 +144,24 @@ def _get_git_info() -> dict:
 
 
 def get_env_context() -> str:
-    """Gather environment context including OS, shell, directory, and git info."""
+    """Gather environment context including OS, shell, directory, and git info.
+
+    Results are cached for 2 seconds to avoid redundant subprocess calls
+    when called multiple times in quick succession.
+    """
+    global _env_context_cache
+
+    current_time = time.time()
+    current_cwd = os.getcwd()
+
+    # Check if cache is valid (within TTL and same directory)
+    if (
+        _env_context_cache["value"] is not None
+        and current_time - _env_context_cache["timestamp"] < _CACHE_TTL_SECONDS
+        and _env_context_cache["cwd"] == current_cwd
+    ):
+        return _env_context_cache["value"]
+
     context_parts = []
 
     # OS information
@@ -156,8 +174,7 @@ def get_env_context() -> str:
         context_parts.append(f"SHELL: {shell}")
 
     # Current directory
-    cwd = os.getcwd()
-    context_parts.append(f"CWD: {cwd}")
+    context_parts.append(f"CWD: {current_cwd}")
 
     # Git information
     git_info = _get_git_info()
@@ -170,7 +187,14 @@ def get_env_context() -> str:
     else:
         context_parts.append("GIT_REPO: no")
 
-    return "\n".join(context_parts)
+    result = "\n".join(context_parts)
+
+    # Update cache
+    _env_context_cache["value"] = result
+    _env_context_cache["timestamp"] = current_time
+    _env_context_cache["cwd"] = current_cwd
+
+    return result
 
 
 def show_help():
